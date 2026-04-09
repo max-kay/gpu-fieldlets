@@ -43,11 +43,11 @@ impl Default for WorldBuilder {
         let small_saxis: Float = 75.0 * NANO;
         let mag_moment_density: Float = 380.0 * KILO;
 
-        let h_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 500.0 * mag_moment_density;
+        let h_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 5.0 * mag_moment_density;
         let e_field: Vec3 = Vec3::new(0.0, 1.0, 0.0) * 100.0 * MEGA;
         Self {
             fill_fraction: 0.01,
-            particle_number: 20,
+            particle_number: 1000,
             small_saxis: 75.0 * NANO,
             big_saxis: small_saxis * 3.5,
             mag_moment_density: 380.0 * KILO,
@@ -56,10 +56,10 @@ impl Default for WorldBuilder {
             epsilon_part: 10.0,
             h_field,
             e_field,
-            repulsion_factor: 10000.0,
-            delta_time: 0.0001,
-            duration: 20.0,
-            log_step: 1,
+            repulsion_factor: 1000.0,
+            delta_time: 0.000001,
+            duration: 0.2,
+            log_step: 10000,
             seed: None,
         }
     }
@@ -73,13 +73,40 @@ impl WorldBuilder {
         let radius_eq = (self.big_saxis.powi(2) * self.small_saxis).powf(1.0 / 3.0);
         let t_drag = 6.0 * PI * self.viscosity * radius_eq;
         let r_drag = 8.0 * PI * self.viscosity * self.big_saxis.powi(2) * self.small_saxis;
-        let shape_factor = self.small_saxis * self.big_saxis / 2.0
+        let shape_factor = self.small_saxis / (2.0 * self.big_saxis)
             * (PI / 2.0 + self.small_saxis / self.big_saxis);
-        let mag_sus_x = (self.epsilon_part - self.epsilon_mat)
+        let e_sus_x = (self.epsilon_part - self.epsilon_mat)
             / (1.0 + (self.epsilon_part - self.epsilon_mat) / self.epsilon_mat * shape_factor);
-        let mag_sus_y = (self.epsilon_part - self.epsilon_mat)
-            / (1.0 + (self.epsilon_part - self.epsilon_mat) / self.epsilon_mat * shape_factor);
+        let e_sus_z = (self.epsilon_part - self.epsilon_mat)
+            / (1.0
+                + (self.epsilon_part - self.epsilon_mat) / self.epsilon_mat
+                    * (1.0 - 2.0 * shape_factor));
         let mag_dipole = particle_vol * self.mag_moment_density;
+
+        let seed = self.seed.unwrap_or_else(rand::random::<u64>);
+        self.seed = Some(seed);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+
+        let mut positions: Vec<Vec3> = Vec::with_capacity(self.particle_number);
+        let min_dist = 2.0 * radius_eq * 1.1; // 10% clearance
+        let mut attempts = 0;
+        while positions.len() < self.particle_number {
+            let candidate: Vec3 = rng.sample(Bounded(rve_side_len));
+            let overlap = positions.iter().any(|p| {
+                let r = (candidate - *p) % rve_side_len;
+                r.norm() < min_dist
+            });
+            if !overlap {
+                positions.push(candidate);
+            }
+            attempts += 1;
+            if attempts > self.particle_number * 10_000 {
+                eprintln!(
+                    "Warning: could not place all particles without overlap after {attempts} attempts"
+                );
+                break;
+            }
+        }
 
         let log_dir = format!("out/{}", Local::now().format("%Y-%m-%d_%H-%M-%S"));
         if let Err(err) = std::fs::create_dir_all(&log_dir) {
@@ -90,15 +117,8 @@ impl WorldBuilder {
             eprintln!("could not log configuration: {err}")
         }
 
-        let seed = self.seed.unwrap_or_else(rand::random::<u64>);
-        self.seed = Some(seed);
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-
         World {
-            positions: (&mut rng)
-                .sample_iter(Bounded(rve_side_len))
-                .take(self.particle_number)
-                .collect(),
+            positions,
             directions: (&mut rng)
                 .sample_iter(UnitVec)
                 .take(self.particle_number)
@@ -113,8 +133,8 @@ impl WorldBuilder {
             radius_eq,
             t_drag,
             r_drag,
-            e_sus_x: mag_sus_x,
-            e_sus_z: mag_sus_y,
+            e_sus_x,
+            e_sus_z,
             mag_dipole,
 
             log_dir,

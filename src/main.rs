@@ -7,7 +7,7 @@ use std::{
 
 type Float = f64;
 const NUMPY_FLOAT_DESCR: &str = "<f8";
-const PI: Float = 3.14159265;
+const PI: Float = std::f64::consts::PI as Float;
 const EPSILON_0: Float = 8.8541878188e-12;
 const MU_0: Float = 1.2566370612e-6;
 
@@ -105,9 +105,9 @@ impl World {
                 let r_ji_hat = r_ji / dist;
 
                 let prefactor = self.mag_dipole / (4.0 * PI) / dist.powi(3);
-                let e_ji = prefactor
+                let h_ji = prefactor
                     * (3.0 * (self.directions[j].dot(r_ji_hat)) * r_ji_hat - self.directions[j]);
-                h_field_i += e_ji;
+                h_field_i += h_ji;
             }
             self.h_field[i] = h_field_i;
         }
@@ -129,8 +129,9 @@ impl World {
         }
     }
 
-    fn calc_p_vels(&self, buf: &mut [Vec3]) {
-        buf.iter_mut().for_each(|p| *p = Vec3::new(0.0, 0.0, 0.0));
+    fn calc_p_vels(&self, buf: &mut [[Vec3; 3]]) {
+        buf.iter_mut()
+            .for_each(|p| *p = [Vec3::new(0.0, 0.0, 0.0); 3]);
         for i in 0..self.param.particle_number {
             for j in (i + 1)..self.param.particle_number {
                 let r_ji = (self.positions[i] - self.positions[j]) % self.rve_side_len;
@@ -160,20 +161,24 @@ impl World {
                     * (f_e1 + f_e2);
 
                 // repulsive
-                let f_r = MU_0 * self.mag_dipole.powi(2) * self.param.h_field.norm_sq() / 4.0 / PI
-                    * ((-self.param.repulsion_factor * (dist / (2.0 * self.radius_eq - 1.0)))
+                let f_r = 3.0 * MU_0 * self.mag_dipole.powi(2) * self.param.h_field.norm_sq()
+                    / (2.0 * PI * (2.0 * self.radius_eq).powi(4))
+                    * ((-self.param.repulsion_factor * (dist / (2.0 * self.radius_eq) - 1.0))
                         .exp()
                         * r_ji_hat);
 
-                let f = f_r + f_h + f_e;
+                buf[i][0] = buf[i][0] + f_h / self.t_drag;
+                buf[i][1] = buf[i][1] + f_e / self.t_drag;
+                buf[i][2] = buf[i][2] + f_r / self.t_drag;
 
-                buf[i] += f / self.t_drag;
-                buf[j] += -f / self.t_drag;
+                buf[j][0] = buf[j][0] + -f_h / self.t_drag;
+                buf[j][1] = buf[j][1] + -f_e / self.t_drag;
+                buf[j][2] = buf[j][2] + -f_r / self.t_drag;
             }
         }
     }
 
-    fn calc_d_vels(&self, buf: &mut [Vec3]) {
+    fn calc_d_vels(&self, buf: &mut [[Vec3; 2]]) {
         for i in 0..self.param.particle_number {
             let magnetic = MU_0
                 * self.mag_dipole
@@ -185,40 +190,76 @@ impl World {
                 * (self.e_field[i].dot(self.directions[i]))
                 * (self.e_field[i]
                     - self.directions[i] * (self.e_field[i].dot(self.directions[i])));
-            buf[i] = (magnetic + electric) / self.r_drag;
+            buf[i] = [magnetic / self.r_drag, electric / self.r_drag];
         }
     }
 }
 
 /// Method for the simulation
 impl World {
-    fn step_by(&mut self, p_buf: &mut [Vec3], d_buf: &mut [Vec3]) {
+    fn debug_bufs(&self, p_buf: &mut [[Vec3; 3]], d_buf: &mut [[Vec3; 2]]) {
+        let mut vel_norms = [0.0; 3];
+        let mut vel_max = [0.0; 3];
+        for vs in p_buf.iter() {
+            for i in 0..3 {
+                let norm = vs[i].norm()
+                    * (self.param.delta_time
+                        / (self.param.particle_number as Float * self.radius_eq));
+                vel_norms[i] += norm;
+                if vel_max[i] < norm {
+                    vel_max[i] = norm
+                }
+            }
+        }
+        let mut dir_change_norms = [0.0; 2];
+        let mut dir_change_max = [0.0; 2];
+        for ds in d_buf.iter() {
+            for i in 0..2 {
+                let norm =
+                    ds[i].norm() * (self.param.delta_time / self.param.particle_number as Float);
+                dir_change_norms[i] += norm;
+                if dir_change_max[i] < norm {
+                    dir_change_max[i] = norm
+                }
+            }
+        }
+        dbg!(vel_norms);
+        dbg!(vel_max);
+        println!();
+        dbg!(dir_change_norms);
+        dbg!(dir_change_max);
+        println!();
+        println!();
+    }
+
+    fn step_by(&mut self, p_buf: &mut [[Vec3; 3]], d_buf: &mut [[Vec3; 2]]) {
         self.calc_dipoles();
         self.calc_h_field();
         self.calc_e_field();
         self.calc_p_vels(p_buf);
         self.calc_d_vels(d_buf);
+
+        self.debug_bufs(p_buf, d_buf);
+
         self.positions
             .iter_mut()
             .zip(p_buf.iter())
             .for_each(|(p, v)| {
-                *p = (*p + self.param.delta_time * *v) % self.rve_side_len;
+                let vel: Vec3 = v.iter().fold(Vec3::new(0.0, 0.0, 0.0), |acc, v| acc + *v);
+                *p = (*p + self.param.delta_time * vel) % self.rve_side_len;
             });
         self.directions
             .iter_mut()
             .zip(d_buf.iter())
             .for_each(|(d, v)| {
-                *d = (*d + self.param.delta_time * *v).normalised();
+                let vel: Vec3 = v.iter().fold(Vec3::new(0.0, 0.0, 0.0), |acc, v| acc + *v);
+                *d = (*d + self.param.delta_time * vel).normalised();
             });
-
-        if self.check_all_bufs("end of step") {
-            panic!("Cannot continue with invalid buffers!")
-        }
     }
 
     pub fn run(&mut self) {
-        let mut p_buf = vec![Vec3::default(); self.positions.len()];
-        let mut d_buf = vec![Vec3::default(); self.positions.len()];
+        let mut p_buf = vec![[Vec3::default(); 3]; self.positions.len()];
+        let mut d_buf = vec![[Vec3::default(); 2]; self.positions.len()];
         let iterations = (self.param.duration / self.param.delta_time) as usize;
         for i in 0..iterations {
             println!("{}/{}", i + 1, iterations);
@@ -228,6 +269,12 @@ impl World {
                 }
             }
             self.step_by(&mut p_buf, &mut d_buf);
+            if self.check_all_bufs("") {
+                if let Err(err) = self.debug_file(&format!("{i:0>8}")) {
+                    eprintln!("could not log: {err}");
+                }
+                panic!("Cannot continue with invalid buffers!");
+            }
         }
         if let Err(err) = self.debug_file(&format!("{iterations:0>8}")) {
             eprintln!("could not log: {err}");
@@ -267,8 +314,6 @@ pub fn write_array(data: &[Vec3], path: impl AsRef<Path>) -> std::io::Result<()>
     file.write_all(&h_len.to_le_bytes())?;
     file.write_all(&header_bytes)?;
 
-    // Safety: Vec3 is repr(C) and contains three f32s (12 bytes total)
-    // Writing the entire buffer at once is much faster
     let data_ptr = data.as_ptr() as *const u8;
     let data_len = data.len() * std::mem::size_of::<Vec3>();
     unsafe {
