@@ -56,9 +56,9 @@ impl Distribution<Vec3> for Bounded {
 #[derive(Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct Vec3 {
-    x: Float,
-    y: Float,
-    z: Float,
+    pub x: Float,
+    pub y: Float,
+    pub z: Float,
 }
 
 // To serialize the entire struct as a sequence

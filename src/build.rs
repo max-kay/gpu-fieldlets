@@ -4,16 +4,19 @@ use std::{error::Error, fs::File};
 use chrono::{self, Local};
 use rand::prelude::*;
 
+use crate::math::GoodValues;
+
 use super::{
-    Float, PI, Vec3, World,
+    Float, PI, Simulation, Vec3,
     math::{Bounded, UnitVec},
 };
 
 const MEGA: Float = 1e6;
 const KILO: Float = 1e3;
 const NANO: Float = 1e-9;
-#[derive(Clone, Copy, serde::Serialize)]
-pub struct WorldBuilder {
+
+#[derive(Clone, serde::Serialize)]
+pub struct SimulationBuilder {
     pub fill_fraction: Float,
     pub particle_number: usize,
     pub small_saxis: Float,
@@ -36,15 +39,16 @@ pub struct WorldBuilder {
 
     pub log_step: usize,
     pub seed: Option<u64>,
+    pub name: String,
 }
 
-impl Default for WorldBuilder {
+impl Default for SimulationBuilder {
     fn default() -> Self {
         let small_saxis: Float = 75.0 * NANO;
         let mag_moment_density: Float = 380.0 * KILO;
 
         let h_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 5.0 * mag_moment_density;
-        let e_field: Vec3 = Vec3::new(0.0, 1.0, 0.0) * 100.0 * MEGA;
+        let e_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 100.0 * MEGA;
         Self {
             fill_fraction: 0.01,
             particle_number: 1000,
@@ -56,17 +60,44 @@ impl Default for WorldBuilder {
             epsilon_part: 10.0,
             h_field,
             e_field,
-            repulsion_factor: 1000.0,
-            delta_time: 0.000001,
-            duration: 0.2,
-            log_step: 10000,
+            repulsion_factor: 40.0,
+            delta_time: 0.00001,
+            duration: 1.0,
+            log_step: 1000,
             seed: None,
+            name: String::new(),
         }
     }
 }
 
-impl WorldBuilder {
-    pub fn build(mut self) -> World {
+impl SimulationBuilder {
+    pub fn set_e_field_dir(mut self, v: Vec3) -> Self {
+        let normalized = v.normalised();
+        if normalized.is_finite() {
+            self.e_field = 100.0 * MEGA * normalized;
+        }
+        self
+    }
+
+    pub fn set_h_field_dir(mut self, v: Vec3) -> Self {
+        let normalized = v.normalised();
+        if normalized.is_finite() {
+            self.h_field = 5.0 * self.mag_moment_density * normalized;
+        }
+        self
+    }
+
+    pub fn h_field_set_zero(mut self) -> Self {
+        self.h_field = Vec3::new(0.0, 0.0, 0.0);
+        self
+    }
+
+    pub fn e_field_set_zero(mut self) -> Self {
+        self.e_field = Vec3::new(0.0, 0.0, 0.0);
+        self
+    }
+
+    pub fn build(mut self) -> Simulation {
         let particle_vol = 4.0 / 3.0 * PI * self.big_saxis.powi(2) * self.small_saxis;
         let rve_side_len =
             (particle_vol * self.particle_number as Float / self.fill_fraction).powf(1.0 / 3.0);
@@ -117,15 +148,17 @@ impl WorldBuilder {
             eprintln!("could not log configuration: {err}")
         }
 
-        World {
+        let mut this = Simulation {
             positions,
             directions: (&mut rng)
                 .sample_iter(UnitVec)
                 .take(self.particle_number)
                 .collect(),
             el_dipole_moments: vec![Vec3::default(); self.particle_number],
-            e_field: vec![Vec3::default(); self.particle_number],
+            e_field: vec![self.e_field; self.particle_number],
             h_field: vec![Vec3::default(); self.particle_number],
+            pos_vel: vec![[Vec3::default(); 3]; self.particle_number],
+            dir_vel: vec![[Vec3::default(); 2]; self.particle_number],
 
             param: self,
             particle_vol,
@@ -138,7 +171,9 @@ impl WorldBuilder {
             mag_dipole,
 
             log_dir,
-        }
+        };
+        this.update_el_dipoles();
+        this
     }
 
     pub fn to_json(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {

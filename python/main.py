@@ -1,3 +1,4 @@
+from sys import argv
 import glob
 import json
 import os
@@ -83,12 +84,12 @@ def plot_ellipsoids(
     plt.close(fig)
 
 
-def main():
-    last_dir = sorted(
-        [dir for dir in os.listdir("../out") if os.path.isdir("../out/" + dir)]
-    )[-1]
-    print("Plotting run:", last_dir)
-    path = f"../out/{last_dir}"
+PATH = "out"
+
+
+
+def run_on_path(path):
+    print("Plotting run:", path)
     frames = sorted(
         [
             int(p.removesuffix("_pos.npy").removeprefix(path + "/"))
@@ -125,6 +126,15 @@ def main():
     print("making animation")
     create_animation(path, fps=10)
 
+def main():
+    if len(argv) > 1:
+        for dir in argv[1:]
+            run_on_path(dir)
+    else:
+        last_dir = sorted(
+            [dir for dir in os.listdir(PATH) if os.path.isdir(f"{PATH}/{dir}")]
+        )[-1]
+            run_on_path(f"{PATH}/{last_dir}")
 
 if __name__ == "__main__":
     main()
