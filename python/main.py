@@ -128,13 +128,13 @@ def run_on_path(path):
 
 def main():
     if len(argv) > 1:
-        for dir in argv[1:]
+        for dir in argv[1:]:
             run_on_path(dir)
     else:
         last_dir = sorted(
             [dir for dir in os.listdir(PATH) if os.path.isdir(f"{PATH}/{dir}")]
         )[-1]
-            run_on_path(f"{PATH}/{last_dir}")
+        run_on_path(f"{PATH}/{last_dir}")
 
 if __name__ == "__main__":
     main()
