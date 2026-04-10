@@ -9,7 +9,7 @@ from imageio import v2 as imageio
 PI = 3.1415926
 
 
-def create_animation(path, fps=10):
+def create_animation(path, title, fps=10):
     images = []
     image_files = sorted(glob.glob(os.path.join(path, "*.png")))
 
@@ -17,7 +17,7 @@ def create_animation(path, fps=10):
         print("No images found to animate.")
         return
 
-    output_path = path + ".mp4"
+    output_path = f"{path}_{"_".join(title.split(" "))}.mp4"
 
     with imageio.get_writer(output_path, fps=fps) as writer:
         for filename in image_files:
@@ -87,17 +87,16 @@ def plot_ellipsoids(
 PATH = "out"
 
 
-
 def run_on_path(path):
-    print("Plotting run:", path)
+    with open(path + "/config.json") as file:
+        config = json.load(file)
+    print("Plotting run:", config["name"])
     frames = sorted(
         [
             int(p.removesuffix("_pos.npy").removeprefix(path + "/"))
             for p in glob.glob(os.path.join(path, "*_pos.npy"))
         ]
     )
-    with open(path + "/config.json") as file:
-        config = json.load(file)
 
     particle_vol = 4.0 / 3.0 * PI * config["big_saxis"] ** 2 * config["small_saxis"]
     rve_side_len = (
@@ -106,11 +105,9 @@ def run_on_path(path):
     iterations = frames[-1]
     for i in frames:
         frame_n = f"{i:0>8}"
-        print(f"Frame: {i}/{iterations}")
         p_file = path + "/" + frame_n + "_pos.npy"
         d_file = path + "/" + frame_n + "_dir.npy"
         if os.path.exists(d_file):
-            time = config["delta_time"] * i
             centers = np.load(p_file)
             directions = np.load(d_file)
             plot_ellipsoids(
@@ -120,11 +117,12 @@ def run_on_path(path):
                 a=config["big_saxis"],
                 c=config["small_saxis"],
                 rve_side_len=rve_side_len,
-                title=f"t = {time:.4f}s",
+                title=f"{config["name"]} {1000 * config["delta_time"] * i:.1f} ms",
                 iteration=i,
             )
     print("making animation")
-    create_animation(path, fps=10)
+    create_animation(path, title = config["name"], fps=10)
+
 
 def main():
     if len(argv) > 1:
@@ -135,6 +133,7 @@ def main():
             [dir for dir in os.listdir(PATH) if os.path.isdir(f"{PATH}/{dir}")]
         )[-1]
         run_on_path(f"{PATH}/{last_dir}")
+
 
 if __name__ == "__main__":
     main()

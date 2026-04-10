@@ -1,3 +1,10 @@
+use std::{
+    io::Write,
+    process::{Command, Stdio},
+};
+
+use chrono::{self, Local};
+
 type Float = f64;
 const PI: Float = std::f64::consts::PI as Float;
 const EPSILON_0: Float = 8.8541878188e-12;
@@ -7,12 +14,7 @@ mod build;
 mod math;
 mod numpy;
 
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
-
-use build::{SimulationBuilder, SimulationParameters};
+use build::{SimulationBuilder, SimulationParameters, ValueOrFn};
 use math::{GoodValues, Vec3};
 use numpy::Numpy;
 
@@ -22,42 +24,9 @@ struct Simulation {
     h_field: Vec<Vec3>,
     positions: Vec<Vec3>,
     directions: Vec<Vec3>,
-    pos_vel: Vec<[Vec3; 3]>,
-    dir_vel: Vec<[Vec3; 2]>,
-
+    pos_vel: Vec<Vec3>,
+    dir_vel: Vec<Vec3>,
     params: SimulationParameters,
-    log_dir: String,
-}
-
-impl Simulation {
-    pub fn new() -> SimulationBuilder {
-        SimulationBuilder::default()
-    }
-
-    fn check_all_bufs(&self, prepend: &str) -> bool {
-        let mut failed = false;
-        if !self.positions.is_finite() {
-            failed = true;
-            eprintln!("{prepend} positions was not finite");
-        };
-        if !self.directions.is_finite() {
-            failed = true;
-            eprintln!("{prepend} directions was not finite");
-        };
-        if !self.e_field.is_finite() {
-            failed = true;
-            eprintln!("{prepend} e_field was not finite");
-        };
-        if !self.h_field.is_finite() {
-            failed = true;
-            eprintln!("{prepend} h_field was not finite");
-        };
-        if !self.el_dipole_moments.is_finite() {
-            failed = true;
-            eprintln!("{prepend} e_dipole_moments was not finite");
-        };
-        failed
-    }
 }
 
 /// physics functions
@@ -118,7 +87,7 @@ impl Simulation {
     fn update_p_vels(&mut self, time: Float) {
         self.pos_vel
             .iter_mut()
-            .for_each(|p| *p = [Vec3::new(0.0, 0.0, 0.0); 3]);
+            .for_each(|p| *p = Vec3::new(0.0, 0.0, 0.0));
         for i in 0..self.params.particle_number {
             for j in (i + 1)..self.params.particle_number {
                 let r_ji = (self.positions[i] - self.positions[j]) % self.params.rve_side_len;
@@ -148,20 +117,22 @@ impl Simulation {
                     * (f_e1 + f_e2);
 
                 // repulsive
-                let f_r = 3.0 * MU_0 * self.params.mag_dipole.powi(2)
-                    / (2.0 * PI * (2.0 * self.params.radius_eq).powi(4))
-                    * ((-self.params.repulsion_factor
-                        * (dist / (2.0 * self.params.radius_eq) - 1.0))
-                        .exp()
-                        * r_ji_hat);
+                let f_r = if dist < self.params.radius_eq * 6.0 {
+                    3.0 * MU_0 * self.params.mag_dipole.powi(2)
+                        / (2.0 * PI * (2.0 * self.params.radius_eq).powi(4))
+                        * ((((-self.params.repulsion_factor
+                            * (dist / (2.0 * self.params.radius_eq) - 1.0))
+                            as f32)
+                            .exp() as Float)
+                            * r_ji_hat)
+                } else {
+                    Vec3::new(0.0, 0.0, 0.0)
+                };
 
-                self.pos_vel[i][0] = self.pos_vel[i][0] + f_h / self.params.t_drag(time);
-                self.pos_vel[i][1] = self.pos_vel[i][1] + f_e / self.params.t_drag(time);
-                self.pos_vel[i][2] = self.pos_vel[i][2] + f_r / self.params.t_drag(time);
+                let f = (f_h + f_e + f_r) / self.params.t_drag(time);
 
-                self.pos_vel[j][0] = self.pos_vel[j][0] + -f_h / self.params.t_drag(time);
-                self.pos_vel[j][1] = self.pos_vel[j][1] + -f_e / self.params.t_drag(time);
-                self.pos_vel[j][2] = self.pos_vel[j][2] + -f_r / self.params.t_drag(time);
+                self.pos_vel[i] = self.pos_vel[i] + f;
+                self.pos_vel[j] = self.pos_vel[j] - f;
             }
         }
     }
@@ -178,10 +149,7 @@ impl Simulation {
                 * (self.e_field[i].dot(self.directions[i]))
                 * (self.e_field[i]
                     - self.directions[i] * (self.e_field[i].dot(self.directions[i])));
-            self.dir_vel[i] = [
-                magnetic / self.params.r_drag(time),
-                electric / self.params.r_drag(time),
-            ];
+            self.dir_vel[i] = (magnetic + electric) / self.params.r_drag(time);
         }
     }
 
@@ -190,9 +158,7 @@ impl Simulation {
             .iter_mut()
             .zip(self.pos_vel.iter())
             .for_each(|(p, v)| {
-                let mut translation: Vec3 =
-                    v.iter().fold(Vec3::new(0.0, 0.0, 0.0), |acc, v| acc + *v)
-                        * self.params.delta_time;
+                let mut translation: Vec3 = *v * self.params.delta_time;
                 if translation.norm() > self.params.radius_eq / 3.0 {
                     translation = translation.normalised() * self.params.radius_eq / 3.0;
                 }
@@ -205,15 +171,27 @@ impl Simulation {
             .iter_mut()
             .zip(self.dir_vel.iter())
             .for_each(|(d, v)| {
-                let vel: Vec3 = v.iter().fold(Vec3::new(0.0, 0.0, 0.0), |acc, v| acc + *v);
-                *d = (*d + self.params.delta_time * vel).normalised();
+                *d = (*d + self.params.delta_time * *v).normalised();
             });
     }
 }
 
 /// Method for the simulation
 impl Simulation {
-    pub fn run(&mut self) {
+    pub fn new() -> SimulationBuilder {
+        SimulationBuilder::default()
+    }
+
+    pub fn run(&mut self) -> String {
+        let log_dir = format!("out/{}", Local::now().format("%Y-%m-%d_%H-%M-%S"));
+        if let Err(err) = std::fs::create_dir_all(&log_dir) {
+            eprintln!("could not make log dir: {err}")
+        }
+
+        if let Err(err) = self.params.to_json(format!("{}/config.json", log_dir)) {
+            eprintln!("could not log configuration: {err}")
+        }
+
         let iterations = (self.params.duration / self.params.delta_time) as usize;
         let mut current_time = 0.0;
         let mut i = 0;
@@ -228,7 +206,7 @@ impl Simulation {
             let _ = write!(stdout.lock(), "\r{: >8}/{: >8}", i + 1, iterations);
             let _ = stdout.flush();
             if i % self.params.log_step == 0 {
-                if let Err(err) = self.log_state(&format!("./does_not_exist{i:0>8}")) {
+                if let Err(err) = self.log_state(&format!("./{i:0>8}"), &log_dir) {
                     eprintln!("could not log: {err}");
                 }
             }
@@ -251,25 +229,52 @@ impl Simulation {
                 break;
             }
         }
-        if let Err(err) = self.log_state(&format!("{i:0>8}")) {
+        println!();
+        if let Err(err) = self.log_state(&format!("{i:0>8}"), &log_dir) {
             eprintln!("could not log: {err}");
         }
+        log_dir
     }
 
-    pub fn log_state(&self, name: &str) -> std::io::Result<()> {
+    pub fn log_state(&self, name: &str, dir: &str) -> std::io::Result<()> {
         self.positions
-            .write_npy(&format!("{}/{}_pos.npy", self.log_dir, name))?;
+            .write_npy(&format!("{}/{}_pos.npy", dir, name))?;
         self.directions
-            .write_npy(&format!("{}/{}_dir.npy", self.log_dir, name))?;
+            .write_npy(&format!("{}/{}_dir.npy", dir, name))?;
         Ok(())
+    }
+
+    fn check_all_bufs(&self, prepend: &str) -> bool {
+        let mut failed = false;
+        if !self.positions.is_finite() {
+            failed = true;
+            eprintln!("{prepend} positions was not finite");
+        };
+        if !self.directions.is_finite() {
+            failed = true;
+            eprintln!("{prepend} directions was not finite");
+        };
+        if !self.e_field.is_finite() {
+            failed = true;
+            eprintln!("{prepend} e_field was not finite");
+        };
+        if !self.h_field.is_finite() {
+            failed = true;
+            eprintln!("{prepend} h_field was not finite");
+        };
+        if !self.el_dipole_moments.is_finite() {
+            failed = true;
+            eprintln!("{prepend} e_dipole_moments was not finite");
+        };
+        failed
     }
 }
 
 fn start_plotting(path: &str) -> Result<std::process::Child, std::io::Error> {
-    Command::new("./python/.venv/bin/python")
+    Command::new("./.venv/bin/python")
         .arg("./python/main.py")
         .arg(path)
-        .stdout(Stdio::null())
+        .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
 }
@@ -278,16 +283,34 @@ fn main() {
     let mut children = Vec::new();
     let mut simulations = vec![
         {
+            fn dir(t: Float) -> Vec3 {
+                let theta = t / 3.0 * 2.0;
+                Vec3::new(theta.sin(), theta.cos(), 0.0)
+            }
             let mut builder = Simulation::new();
-            builder.e_field_dir = Vec3::new(1.0, 1.0, 0.0).normalised().into();
+            builder.e_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
+            builder.h_field_dir = ValueOrFn::Fn(dir);
+            builder.name = "rotating H field".into();
             builder.build()
         },
-        Simulation::new().build(),
+        {
+            fn dir(t: Float) -> Vec3 {
+                let theta = t / 3.0 * 2.0;
+                Vec3::new(theta.sin(), theta.cos(), 0.0)
+            }
+            let mut builder = Simulation::new();
+            builder.h_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
+            builder.e_field_dir = ValueOrFn::Fn(dir);
+            builder.name = "rotating E field".into();
+            builder.build()
+        },
     ];
 
-    for s in &mut simulations {
-        s.run();
-        match start_plotting(&s.log_dir) {
+    let len = simulations.len();
+    for (i, s) in simulations.iter_mut().enumerate() {
+        println!("simulation of `{}` {}/{}", s.params.name, i + 1, len);
+        let log_dir = s.run();
+        match start_plotting(&log_dir) {
             Ok(child) => children.push((child, s.params.name.clone())),
             Err(err) => eprintln!("could not launch plotting for `{}` {err}", s.params.name),
         }

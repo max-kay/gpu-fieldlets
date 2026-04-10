@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::{error::Error, fs::File};
 
-use chrono::{self, Local};
 use rand::prelude::*;
 
 use super::{
@@ -106,7 +105,7 @@ impl Default for SimulationBuilder {
 
         Self {
             fill_fraction: 0.01,
-            particle_number: 1000,
+            particle_number: 500,
             small_saxis: 75.0 * NANO,
             big_saxis: small_saxis * 3.5,
             mag_moment_density: 380.0 * KILO,
@@ -264,15 +263,6 @@ impl SimulationBuilder {
             }
         }
 
-        let log_dir = format!("out/{}", Local::now().format("%Y-%m-%d_%H-%M-%S"));
-        if let Err(err) = std::fs::create_dir_all(&log_dir) {
-            eprintln!("could not make log dir: {err}")
-        }
-
-        if let Err(err) = params.to_json(format!("{}/config.json", log_dir)) {
-            eprintln!("could not log configuration: {err}")
-        }
-
         let mut this = Simulation {
             positions,
             directions: (&mut rng)
@@ -284,9 +274,7 @@ impl SimulationBuilder {
             h_field: vec![Vec3::default(); params.particle_number],
             pos_vel: vec![Vec3::default(); params.particle_number],
             dir_vel: vec![Vec3::default(); params.particle_number],
-
             params,
-            log_dir,
         };
         this.update_el_dipoles();
         this
