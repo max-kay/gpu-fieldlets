@@ -4,8 +4,6 @@ use std::{error::Error, fs::File};
 use chrono::{self, Local};
 use rand::prelude::*;
 
-use crate::math::GoodValues;
-
 use super::{
     Float, PI, Simulation, Vec3,
     math::{Bounded, UnitVec},
@@ -16,6 +14,34 @@ const KILO: Float = 1e3;
 const NANO: Float = 1e-9;
 
 #[derive(Clone, serde::Serialize)]
+pub enum ValueOrFn<T> {
+    Value(T),
+    #[serde(skip)]
+    Fn(fn(Float) -> T),
+}
+
+impl<T> From<T> for ValueOrFn<T> {
+    fn from(value: T) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl<T> From<fn(Float) -> T> for ValueOrFn<T> {
+    fn from(value: fn(Float) -> T) -> Self {
+        Self::Fn(value)
+    }
+}
+
+impl<T: Copy> ValueOrFn<T> {
+    pub fn get(&self, time: Float) -> T {
+        match self {
+            ValueOrFn::Value(v) => *v,
+            ValueOrFn::Fn(f) => f(time),
+        }
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
 pub struct SimulationBuilder {
     pub fill_fraction: Float,
     pub particle_number: usize,
@@ -24,13 +50,15 @@ pub struct SimulationBuilder {
 
     pub mag_moment_density: Float,
 
-    pub viscosity: Float,
+    pub viscosity: ValueOrFn<Float>,
 
     pub epsilon_mat: Float,
     pub epsilon_part: Float,
 
-    pub h_field: Vec3,
-    pub e_field: Vec3,
+    pub h_field_dir: ValueOrFn<Vec3>,
+    pub h_field_norm: ValueOrFn<Float>,
+    pub e_field_dir: ValueOrFn<Vec3>,
+    pub e_field_norm: ValueOrFn<Float>,
 
     pub repulsion_factor: Float,
 
@@ -44,22 +72,23 @@ pub struct SimulationBuilder {
 
 impl Default for SimulationBuilder {
     fn default() -> Self {
+        use ValueOrFn::Value;
         let small_saxis: Float = 75.0 * NANO;
         let mag_moment_density: Float = 380.0 * KILO;
 
-        let h_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 5.0 * mag_moment_density;
-        let e_field: Vec3 = Vec3::new(0.0, 0.0, 1.0) * 100.0 * MEGA;
         Self {
             fill_fraction: 0.01,
             particle_number: 1000,
             small_saxis: 75.0 * NANO,
             big_saxis: small_saxis * 3.5,
             mag_moment_density: 380.0 * KILO,
-            viscosity: 3.5,
+            viscosity: Value(3.5),
             epsilon_mat: 2.0,
             epsilon_part: 10.0,
-            h_field,
-            e_field,
+            h_field_dir: Value(Vec3::new(0.0, 0.0, 1.0)),
+            h_field_norm: Value(5.0 * mag_moment_density),
+            e_field_norm: Value(100.0 * MEGA),
+            e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
             delta_time: 0.00001,
             duration: 1.0,
@@ -70,40 +99,69 @@ impl Default for SimulationBuilder {
     }
 }
 
-impl SimulationBuilder {
-    pub fn set_e_field_dir(mut self, v: Vec3) -> Self {
-        let normalized = v.normalised();
-        if normalized.is_finite() {
-            self.e_field = 100.0 * MEGA * normalized;
-        }
-        self
+#[derive(Clone, serde::Serialize)]
+pub struct SimulationParameters {
+    pub fill_fraction: Float,
+    pub particle_number: usize,
+    pub small_saxis: Float,
+    pub big_saxis: Float,
+
+    pub mag_moment_density: Float,
+
+    viscosity: ValueOrFn<Float>,
+
+    pub epsilon_mat: Float,
+    pub epsilon_part: Float,
+
+    h_field_dir: ValueOrFn<Vec3>,
+    h_field_norm: ValueOrFn<Float>,
+    e_field_dir: ValueOrFn<Vec3>,
+    e_field_norm: ValueOrFn<Float>,
+
+    pub repulsion_factor: Float,
+
+    pub delta_time: Float,
+    pub duration: Float,
+
+    pub log_step: usize,
+    pub seed: u64,
+    pub name: String,
+
+    pub particle_vol: Float,
+    pub rve_side_len: Float,
+    pub radius_eq: Float,
+    pub e_sus_x: Float,
+    pub e_sus_z: Float,
+    pub mag_dipole: Float,
+}
+
+impl SimulationParameters {
+    pub fn t_drag(&self, time: Float) -> Float {
+        6.0 * PI * self.viscosity.get(time) * self.radius_eq
+    }
+    pub fn r_drag(&self, time: Float) -> Float {
+        8.0 * PI * self.viscosity.get(time) * self.big_saxis.powi(2) * self.small_saxis
+    }
+    pub fn ext_e_field(&self, time: Float) -> Vec3 {
+        self.e_field_norm.get(time) * self.e_field_dir.get(time)
+    }
+    pub fn ext_h_field(&self, time: Float) -> Vec3 {
+        self.h_field_norm.get(time) * self.h_field_dir.get(time)
     }
 
-    pub fn set_h_field_dir(mut self, v: Vec3) -> Self {
-        let normalized = v.normalised();
-        if normalized.is_finite() {
-            self.h_field = 5.0 * self.mag_moment_density * normalized;
-        }
-        self
+    pub fn to_json(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
+        let file = File::create(path)?;
+        serde_json::ser::to_writer_pretty(file, &self)?;
+        Ok(())
     }
+}
 
-    pub fn h_field_set_zero(mut self) -> Self {
-        self.h_field = Vec3::new(0.0, 0.0, 0.0);
-        self
-    }
-
-    pub fn e_field_set_zero(mut self) -> Self {
-        self.e_field = Vec3::new(0.0, 0.0, 0.0);
-        self
-    }
-
-    pub fn build(mut self) -> Simulation {
+impl Into<SimulationParameters> for SimulationBuilder {
+    fn into(self) -> SimulationParameters {
         let particle_vol = 4.0 / 3.0 * PI * self.big_saxis.powi(2) * self.small_saxis;
         let rve_side_len =
             (particle_vol * self.particle_number as Float / self.fill_fraction).powf(1.0 / 3.0);
         let radius_eq = (self.big_saxis.powi(2) * self.small_saxis).powf(1.0 / 3.0);
-        let t_drag = 6.0 * PI * self.viscosity * radius_eq;
-        let r_drag = 8.0 * PI * self.viscosity * self.big_saxis.powi(2) * self.small_saxis;
         let shape_factor = self.small_saxis / (2.0 * self.big_saxis)
             * (PI / 2.0 + self.small_saxis / self.big_saxis);
         let e_sus_x = (self.epsilon_part - self.epsilon_mat)
@@ -115,23 +173,62 @@ impl SimulationBuilder {
         let mag_dipole = particle_vol * self.mag_moment_density;
 
         let seed = self.seed.unwrap_or_else(rand::random::<u64>);
-        self.seed = Some(seed);
-        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
 
-        let mut positions: Vec<Vec3> = Vec::with_capacity(self.particle_number);
-        let min_dist = 2.0 * radius_eq * 1.1; // 10% clearance
+        SimulationParameters {
+            fill_fraction: self.fill_fraction,
+            particle_number: self.particle_number,
+            small_saxis: self.small_saxis,
+            big_saxis: self.big_saxis,
+
+            mag_moment_density: self.mag_moment_density,
+
+            viscosity: self.viscosity,
+
+            epsilon_mat: self.epsilon_mat,
+            epsilon_part: self.epsilon_part,
+
+            h_field_dir: self.h_field_dir,
+            h_field_norm: self.h_field_norm,
+            e_field_dir: self.e_field_dir,
+            e_field_norm: self.e_field_norm,
+
+            repulsion_factor: self.repulsion_factor,
+
+            delta_time: self.delta_time,
+            duration: self.duration,
+
+            log_step: self.log_step,
+            seed,
+            name: self.name,
+            particle_vol,
+            rve_side_len,
+            radius_eq,
+            e_sus_x,
+            e_sus_z,
+            mag_dipole,
+        }
+    }
+}
+
+impl SimulationBuilder {
+    pub fn build(self) -> Simulation {
+        let params: SimulationParameters = self.into();
+        let mut rng = rand::rngs::StdRng::seed_from_u64(params.seed);
+
+        let mut positions: Vec<Vec3> = Vec::with_capacity(params.particle_number);
+        let min_dist = 2.0 * params.radius_eq * 1.1; // 10% clearance
         let mut attempts = 0;
-        while positions.len() < self.particle_number {
-            let candidate: Vec3 = rng.sample(Bounded(rve_side_len));
+        while positions.len() < params.particle_number {
+            let candidate: Vec3 = rng.sample(Bounded(params.rve_side_len));
             let overlap = positions.iter().any(|p| {
-                let r = (candidate - *p) % rve_side_len;
+                let r = (candidate - *p) % params.rve_side_len;
                 r.norm() < min_dist
             });
             if !overlap {
                 positions.push(candidate);
             }
             attempts += 1;
-            if attempts > self.particle_number * 10_000 {
+            if attempts > params.particle_number * 10_000 {
                 eprintln!(
                     "Warning: could not place all particles without overlap after {attempts} attempts"
                 );
@@ -144,7 +241,7 @@ impl SimulationBuilder {
             eprintln!("could not make log dir: {err}")
         }
 
-        if let Err(err) = self.to_json(format!("{}/config.json", log_dir)) {
+        if let Err(err) = params.to_json(format!("{}/config.json", log_dir)) {
             eprintln!("could not log configuration: {err}")
         }
 
@@ -152,33 +249,18 @@ impl SimulationBuilder {
             positions,
             directions: (&mut rng)
                 .sample_iter(UnitVec)
-                .take(self.particle_number)
+                .take(params.particle_number)
                 .collect(),
-            el_dipole_moments: vec![Vec3::default(); self.particle_number],
-            e_field: vec![self.e_field; self.particle_number],
-            h_field: vec![Vec3::default(); self.particle_number],
-            pos_vel: vec![[Vec3::default(); 3]; self.particle_number],
-            dir_vel: vec![[Vec3::default(); 2]; self.particle_number],
+            el_dipole_moments: vec![Vec3::default(); params.particle_number],
+            e_field: vec![params.ext_e_field(0.0); params.particle_number],
+            h_field: vec![Vec3::default(); params.particle_number],
+            pos_vel: vec![[Vec3::default(); 3]; params.particle_number],
+            dir_vel: vec![[Vec3::default(); 2]; params.particle_number],
 
-            param: self,
-            particle_vol,
-            rve_side_len,
-            radius_eq,
-            t_drag,
-            r_drag,
-            e_sus_x,
-            e_sus_z,
-            mag_dipole,
-
+            params,
             log_dir,
         };
         this.update_el_dipoles();
         this
-    }
-
-    pub fn to_json(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
-        let file = File::create(path)?;
-        serde_json::ser::to_writer_pretty(file, &self)?;
-        Ok(())
     }
 }
