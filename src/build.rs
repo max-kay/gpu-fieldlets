@@ -13,26 +13,54 @@ const MEGA: Float = 1e6;
 const KILO: Float = 1e3;
 const NANO: Float = 1e-9;
 
-#[derive(Clone, serde::Serialize)]
-pub enum ValueOrFn<T> {
-    Value(T),
-    #[serde(skip)]
-    Fn(fn(Float) -> T),
+pub trait Invalid {
+    const INVALID: Self;
+}
+impl Invalid for f32 {
+    const INVALID: Self = Self::NAN;
+}
+impl Invalid for f64 {
+    const INVALID: Self = Self::NAN;
+}
+impl Invalid for Vec3 {
+    const INVALID: Self = Vec3 {
+        x: Float::NAN,
+        y: Float::NAN,
+        z: Float::NAN,
+    };
 }
 
-impl<T> From<T> for ValueOrFn<T> {
+#[derive(Clone)]
+pub enum ValueOrFn<T: Invalid> {
+    Value(T),
+    Fn(fn(Float) -> T),
+}
+impl<T: Invalid + serde::Serialize> serde::Serialize for ValueOrFn<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            // Serialize the actual value
+            ValueOrFn::Value(v) => v.serialize(serializer),
+            // Serialize the "Invalid" sentinel value (e.g., NaN)
+            ValueOrFn::Fn(_) => T::INVALID.serialize(serializer),
+        }
+    }
+}
+impl<T: Invalid> From<T> for ValueOrFn<T> {
     fn from(value: T) -> Self {
         Self::Value(value)
     }
 }
 
-impl<T> From<fn(Float) -> T> for ValueOrFn<T> {
+impl<T: Invalid> From<fn(Float) -> T> for ValueOrFn<T> {
     fn from(value: fn(Float) -> T) -> Self {
         Self::Fn(value)
     }
 }
 
-impl<T: Copy> ValueOrFn<T> {
+impl<T: Copy + Invalid> ValueOrFn<T> {
     pub fn get(&self, time: Float) -> T {
         match self {
             ValueOrFn::Value(v) => *v,
@@ -254,8 +282,8 @@ impl SimulationBuilder {
             el_dipole_moments: vec![Vec3::default(); params.particle_number],
             e_field: vec![params.ext_e_field(0.0); params.particle_number],
             h_field: vec![Vec3::default(); params.particle_number],
-            pos_vel: vec![[Vec3::default(); 3]; params.particle_number],
-            dir_vel: vec![[Vec3::default(); 2]; params.particle_number],
+            pos_vel: vec![Vec3::default(); params.particle_number],
+            dir_vel: vec![Vec3::default(); params.particle_number],
 
             params,
             log_dir,
