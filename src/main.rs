@@ -31,129 +31,173 @@ struct Simulation {
 
 /// physics functions
 impl Simulation {
-    fn update_e_field(&mut self, time: Float) {
-        for i in 0..self.params.particle_number {
-            let mut e_field_i = self.params.ext_e_field(time);
-            for j in 0..self.params.particle_number {
-                if i == j {
-                    continue;
-                }
-                let r_ji = (self.positions[i] - self.positions[j]) % self.params.rve_side_len;
-                let dist = r_ji.norm();
-                let r_ji_hat = r_ji / dist;
+    unsafe fn update_e_field(&mut self, time: Float) {
+        unsafe {
+            for i in 0..self.params.particle_number {
+                let mut e_field_i = self.params.ext_e_field(time);
+                for j in 0..self.params.particle_number {
+                    if i == j {
+                        continue;
+                    }
+                    let r_ji = (*self.positions.get_unchecked(i)
+                        - *self.positions.get_unchecked(j))
+                        % self.params.rve_side_len;
+                    let dist = r_ji.norm();
+                    let r_ji_hat = r_ji / dist;
 
-                let prefactor =
-                    1.0 / (4.0 * PI * EPSILON_0 * self.params.epsilon_mat) / dist.powi(3);
-                let e_ji = prefactor
-                    * (3.0 * (self.el_dipole_moments[j].dot(r_ji_hat)) * r_ji_hat
-                        - self.el_dipole_moments[j]);
-                e_field_i += e_ji;
+                    let prefactor =
+                        1.0 / (4.0 * PI * EPSILON_0 * self.params.epsilon_mat) / dist.powi(3);
+                    let e_ji = prefactor
+                        * (3.0
+                            * (self.el_dipole_moments.get_unchecked(j).dot(r_ji_hat))
+                            * r_ji_hat
+                            - *self.el_dipole_moments.get_unchecked(j));
+                    e_field_i += e_ji;
+                }
+                *self.e_field.get_unchecked_mut(i) = e_field_i;
             }
-            self.e_field[i] = e_field_i;
         }
     }
 
-    fn update_h_field(&mut self, time: Float) {
+    unsafe fn update_h_field(&mut self, time: Float) {
         for i in 0..self.params.particle_number {
-            let mut h_field_i = self.params.ext_h_field(time);
-            for j in 0..self.params.particle_number {
-                if i == j {
-                    continue;
-                }
-                let r_ji = (self.positions[i] - self.positions[j]) % self.params.rve_side_len;
-                let dist = r_ji.norm();
-                let r_ji_hat = r_ji / dist;
+            unsafe {
+                let mut h_field_i = self.params.ext_h_field(time);
+                for j in 0..self.params.particle_number {
+                    if i == j {
+                        continue;
+                    }
+                    let r_ji = (*self.positions.get_unchecked(i)
+                        - *self.positions.get_unchecked(j))
+                        % self.params.rve_side_len;
+                    let dist = r_ji.norm();
+                    let r_ji_hat = r_ji / dist;
 
-                let prefactor = self.params.mag_dipole / (4.0 * PI) / dist.powi(3);
-                let h_ji = prefactor
-                    * (3.0 * (self.directions[j].dot(r_ji_hat)) * r_ji_hat - self.directions[j]);
-                h_field_i += h_ji;
+                    let prefactor = self.params.mag_dipole / (4.0 * PI) / dist.powi(3);
+                    let h_ji = prefactor
+                        * (3.0 * (self.directions.get_unchecked(j).dot(r_ji_hat)) * r_ji_hat
+                            - *self.directions.get_unchecked(j));
+                    h_field_i += h_ji;
+                }
+                *self.h_field.get_unchecked_mut(i) = h_field_i;
             }
-            self.h_field[i] = h_field_i;
         }
     }
 
-    fn update_el_dipoles(&mut self) {
+    unsafe fn update_el_dipoles(&mut self) {
         for (i, p) in self.el_dipole_moments.iter_mut().enumerate() {
-            *p = self.params.particle_vol
-                * EPSILON_0
-                * (self.params.e_sus_x * self.e_field[i]
-                    + (self.params.e_sus_z - self.params.e_sus_x)
-                        * (self.directions[i].dot(self.e_field[i]))
-                        * self.directions[i])
+            unsafe {
+                *p = self.params.particle_vol
+                    * EPSILON_0
+                    * (self.params.e_sus_x * *self.e_field.get_unchecked(i)
+                        + (self.params.e_sus_z - self.params.e_sus_x)
+                            * (self
+                                .directions
+                                .get_unchecked(i)
+                                .dot(*self.e_field.get_unchecked(i)))
+                            * *self.directions.get_unchecked(i))
+            }
         }
     }
 
-    fn update_p_vels(&mut self, time: Float) {
+    unsafe fn update_p_vels(&mut self, time: Float) {
         self.pos_vel
             .iter_mut()
             .for_each(|p| *p = Vec3::new(0.0, 0.0, 0.0));
         for i in 0..self.params.particle_number {
             for j in (i + 1)..self.params.particle_number {
-                let r_ji = (self.positions[i] - self.positions[j]) % self.params.rve_side_len;
-                let dist = r_ji.norm();
-                let r_ji_hat = r_ji / dist;
+                unsafe {
+                    let r_ji = (*self.positions.get_unchecked(i)
+                        - *self.positions.get_unchecked(j))
+                        % self.params.rve_side_len;
+                    let dist = r_ji.norm();
+                    let r_ji_hat = r_ji / dist;
 
-                // magnetic
-                let f_h1 = (self.directions[i].dot(self.directions[j])
-                    - 5.0
-                        * (r_ji_hat.dot(self.directions[j]))
-                        * (r_ji_hat.dot(self.directions[i])))
-                    * r_ji_hat;
-                let f_h2 = r_ji_hat.dot(self.directions[i]) * self.directions[j]
-                    + r_ji_hat.dot(self.directions[j]) * self.directions[i];
-                let f_h = 3.0 * MU_0 * self.params.mag_dipole.powi(2) / 4.0 / PI / dist.powi(4)
-                    * (f_h1 + f_h2);
+                    // magnetic
+                    let f_h1 = (self
+                        .directions
+                        .get_unchecked(i)
+                        .dot(*self.directions.get_unchecked(j))
+                        - 5.0
+                            * (r_ji_hat.dot(*self.directions.get_unchecked(j)))
+                            * (r_ji_hat.dot(*self.directions.get_unchecked(i))))
+                        * r_ji_hat;
+                    let f_h2 = r_ji_hat.dot(*self.directions.get_unchecked(i))
+                        * *self.directions.get_unchecked(j)
+                        + r_ji_hat.dot(*self.directions.get_unchecked(j))
+                            * *self.directions.get_unchecked(i);
+                    let f_h = 3.0 * MU_0 * self.params.mag_dipole.powi(2) / 4.0 / PI / dist.powi(4)
+                        * (f_h1 + f_h2);
 
-                // electric
-                let f_e1 = (self.el_dipole_moments[i].dot(self.el_dipole_moments[j])
-                    - 5.0
-                        * (r_ji_hat.dot(self.el_dipole_moments[j]))
-                        * (r_ji_hat.dot(self.el_dipole_moments[i])))
-                    * r_ji_hat;
-                let f_e2 = r_ji_hat.dot(self.el_dipole_moments[i]) * self.el_dipole_moments[j]
-                    + r_ji_hat.dot(self.el_dipole_moments[j]) * self.el_dipole_moments[i];
-                let f_e = 3.0 / EPSILON_0 / self.params.epsilon_mat / 2.0 / PI / dist.powi(4)
-                    * (f_e1 + f_e2);
+                    // electric
+                    let f_e1 = (self
+                        .el_dipole_moments
+                        .get_unchecked(i)
+                        .dot(*self.el_dipole_moments.get_unchecked(j))
+                        - 5.0
+                            * (r_ji_hat.dot(*self.el_dipole_moments.get_unchecked(j)))
+                            * (r_ji_hat.dot(*self.el_dipole_moments.get_unchecked(i))))
+                        * r_ji_hat;
+                    let f_e2 = r_ji_hat.dot(*self.el_dipole_moments.get_unchecked(i))
+                        * *self.el_dipole_moments.get_unchecked(j)
+                        + r_ji_hat.dot(*self.el_dipole_moments.get_unchecked(j))
+                            * *self.el_dipole_moments.get_unchecked(i);
+                    let f_e = 3.0 / EPSILON_0 / self.params.epsilon_mat / 2.0 / PI / dist.powi(4)
+                        * (f_e1 + f_e2);
 
-                // repulsive
-                let f_r = if dist < self.params.radius_eq * 6.0 {
-                    3.0 * MU_0 * self.params.mag_dipole.powi(2)
-                        / (2.0 * PI * (2.0 * self.params.radius_eq).powi(4))
-                        * ((((-self.params.repulsion_factor
-                            * (dist / (2.0 * self.params.radius_eq) - 1.0))
-                            as f32)
-                            .exp() as Float)
-                            * r_ji_hat)
-                } else {
-                    Vec3::new(0.0, 0.0, 0.0)
-                };
+                    // repulsive
+                    let f_r = if dist < self.params.radius_eq * 6.0 {
+                        3.0 * MU_0 * self.params.mag_dipole.powi(2)
+                            / (2.0 * PI * (2.0 * self.params.radius_eq).powi(4))
+                            * ((((-self.params.repulsion_factor
+                                * (dist / (2.0 * self.params.radius_eq) - 1.0))
+                                as f32)
+                                .exp() as Float)
+                                * r_ji_hat)
+                    } else {
+                        Vec3::new(0.0, 0.0, 0.0)
+                    };
 
-                let f = (f_h + f_e + f_r) / self.params.t_drag(time);
+                    let f = (f_h + f_e + f_r) / self.params.t_drag(time);
 
-                self.pos_vel[i] = self.pos_vel[i] + f;
-                self.pos_vel[j] = self.pos_vel[j] - f;
+                    *self.pos_vel.get_unchecked_mut(i) = *self.pos_vel.get_unchecked(i) + f;
+                    *self.pos_vel.get_unchecked_mut(j) = *self.pos_vel.get_unchecked(j) - f;
+                }
             }
         }
     }
 
-    fn update_d_vels(&mut self, time: Float) {
-        for i in 0..self.params.particle_number {
-            let magnetic = MU_0
-                * self.params.mag_dipole
-                * (self.h_field[i]
-                    - self.directions[i] * (self.h_field[i].dot(self.directions[i])));
-            let electric = self.params.particle_vol
-                * EPSILON_0
-                * (self.params.e_sus_z - self.params.e_sus_x)
-                * (self.e_field[i].dot(self.directions[i]))
-                * (self.e_field[i]
-                    - self.directions[i] * (self.e_field[i].dot(self.directions[i])));
-            self.dir_vel[i] = (magnetic + electric) / self.params.r_drag(time);
+    unsafe fn update_d_vels(&mut self, time: Float) {
+        unsafe {
+            for i in 0..self.params.particle_number {
+                let magnetic = MU_0
+                    * self.params.mag_dipole
+                    * (*self.h_field.get_unchecked(i)
+                        - *self.directions.get_unchecked(i)
+                            * (self
+                                .h_field
+                                .get_unchecked(i)
+                                .dot(*self.directions.get_unchecked(i))));
+                let electric = self.params.particle_vol
+                    * EPSILON_0
+                    * (self.params.e_sus_z - self.params.e_sus_x)
+                    * (self
+                        .e_field
+                        .get_unchecked(i)
+                        .dot(*self.directions.get_unchecked(i)))
+                    * (*self.e_field.get_unchecked(i)
+                        - *self.directions.get_unchecked(i)
+                            * (self
+                                .e_field
+                                .get_unchecked(i)
+                                .dot(*self.directions.get_unchecked(i))));
+                *self.dir_vel.get_unchecked_mut(i) =
+                    (magnetic + electric) / self.params.r_drag(time);
+            }
         }
     }
 
-    fn update_positions(&mut self) {
+    unsafe fn update_positions(&mut self) {
         self.positions
             .iter_mut()
             .zip(self.pos_vel.iter())
@@ -166,7 +210,7 @@ impl Simulation {
             });
     }
 
-    fn update_directions(&mut self) {
+    unsafe fn update_directions(&mut self) {
         self.directions
             .iter_mut()
             .zip(self.dir_vel.iter())
@@ -214,19 +258,20 @@ impl Simulation {
                     eprintln!("could not log: {err}");
                 }
             }
+            unsafe {
+                for _ in 0..2 {
+                    self.update_e_field(current_time);
+                    self.update_el_dipoles();
+                }
 
-            for _ in 0..2 {
-                self.update_e_field(current_time);
-                self.update_el_dipoles();
+                self.update_h_field(current_time);
+
+                self.update_p_vels(current_time);
+                self.update_d_vels(current_time);
+
+                self.update_positions();
+                self.update_directions();
             }
-
-            self.update_h_field(current_time);
-
-            self.update_p_vels(current_time);
-            self.update_d_vels(current_time);
-
-            self.update_positions();
-            self.update_directions();
 
             if self.check_all_bufs("") {
                 eprintln!("Cannot continue with invalid buffers!");
