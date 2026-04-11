@@ -90,7 +90,7 @@ PATH = "out"
 def run_on_path(path):
     with open(path + "/config.json") as file:
         config = json.load(file)
-    print("Plotting run:", config["name"])
+    print("\nPlotting run:", config["name"])
     frames = sorted(
         [
             int(p.removesuffix("_pos.npy").removeprefix(path + "/"))
@@ -98,11 +98,6 @@ def run_on_path(path):
         ]
     )
 
-    particle_vol = 4.0 / 3.0 * PI * config["big_saxis"] ** 2 * config["small_saxis"]
-    rve_side_len = (
-        particle_vol * config["particle_number"] / config["fill_fraction"]
-    ) ** (1.0 / 3.0)
-    iterations = frames[-1]
     for i in frames:
         frame_n = f"{i:0>8}"
         p_file = path + "/" + frame_n + "_pos.npy"
@@ -116,11 +111,11 @@ def run_on_path(path):
                 path,
                 a=config["big_saxis"],
                 c=config["small_saxis"],
-                rve_side_len=rve_side_len,
+                rve_side_len=config["rve_side_len"],
                 title=f"{config["name"]} {1000 * config["delta_time"] * i:.1f} ms",
                 iteration=i,
             )
-    print("making animation")
+    print("\nMaking animation: ", config["name"])
     create_animation(path, title = config["name"], fps=10)
 
 

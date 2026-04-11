@@ -153,7 +153,7 @@ impl Simulation {
         }
     }
 
-    pub fn update_positions(&mut self) {
+    fn update_positions(&mut self) {
         self.positions
             .iter_mut()
             .zip(self.pos_vel.iter())
@@ -166,7 +166,7 @@ impl Simulation {
             });
     }
 
-    pub fn update_directions(&mut self) {
+    fn update_directions(&mut self) {
         self.directions
             .iter_mut()
             .zip(self.dir_vel.iter())
@@ -178,11 +178,11 @@ impl Simulation {
 
 /// Method for the simulation
 impl Simulation {
-    pub fn new() -> SimulationBuilder {
+    fn new() -> SimulationBuilder {
         SimulationBuilder::default()
     }
 
-    pub fn run(&mut self) -> String {
+    fn run(&mut self) -> String {
         let log_dir = format!("out/{}", Local::now().format("%Y-%m-%d_%H-%M-%S"));
         if let Err(err) = std::fs::create_dir_all(&log_dir) {
             eprintln!("could not make log dir: {err}")
@@ -192,7 +192,6 @@ impl Simulation {
             eprintln!("could not log configuration: {err}")
         }
 
-        let iterations = (self.params.duration / self.params.delta_time) as usize;
         let mut current_time = 0.0;
         let mut i = 0;
         let mut stdout = std::io::stdout();
@@ -203,7 +202,12 @@ impl Simulation {
                 break;
             }
 
-            let _ = write!(stdout.lock(), "\r{: >8}/{: >8}", i + 1, iterations);
+            let _ = write!(
+                stdout.lock(),
+                "\r{: >8.5} s/{: >8.5} s",
+                current_time,
+                self.params.duration
+            );
             let _ = stdout.flush();
             if i % self.params.log_step == 0 {
                 if let Err(err) = self.log_state(&format!("./{i:0>8}"), &log_dir) {
@@ -211,7 +215,7 @@ impl Simulation {
                 }
             }
 
-            for _ in 0..4 {
+            for _ in 0..2 {
                 self.update_e_field(current_time);
                 self.update_el_dipoles();
             }
@@ -236,7 +240,7 @@ impl Simulation {
         log_dir
     }
 
-    pub fn log_state(&self, name: &str, dir: &str) -> std::io::Result<()> {
+    fn log_state(&self, name: &str, dir: &str) -> std::io::Result<()> {
         self.positions
             .write_npy(&format!("{}/{}_pos.npy", dir, name))?;
         self.directions
@@ -283,27 +287,27 @@ fn main() {
     let mut children = Vec::new();
     let mut simulations = vec![
         {
-            fn dir(t: Float) -> Vec3 {
-                let theta = t / 3.0 * 2.0;
-                Vec3::new(theta.sin(), theta.cos(), 0.0)
-            }
+            // fn dir(t: Float) -> Vec3 {
+            //     let theta = 3.0 * t * 2.0 * PI;
+            //     Vec3::new(theta.sin(), theta.cos(), 0.0)
+            // }
             let mut builder = Simulation::new();
-            builder.e_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
-            builder.h_field_dir = ValueOrFn::Fn(dir);
-            builder.name = "rotating H field".into();
+            // builder.e_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
+            // builder.h_field_dir = ValueOrFn::Fn(dir);
+            // builder.name = "rotating H field".into();
             builder.build()
         },
-        {
-            fn dir(t: Float) -> Vec3 {
-                let theta = t / 3.0 * 2.0;
-                Vec3::new(theta.sin(), theta.cos(), 0.0)
-            }
-            let mut builder = Simulation::new();
-            builder.h_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
-            builder.e_field_dir = ValueOrFn::Fn(dir);
-            builder.name = "rotating E field".into();
-            builder.build()
-        },
+        // {
+        //     fn dir(t: Float) -> Vec3 {
+        //         let theta = 3.0 * t * 2.0 * PI;
+        //         Vec3::new(theta.sin(), theta.cos(), 0.0)
+        //     }
+        //     let mut builder = Simulation::new();
+        //     builder.h_field_dir = Vec3::new(1.0, 0.0, 0.0).into();
+        //     builder.e_field_dir = ValueOrFn::Fn(dir);
+        //     builder.name = "rotating E field".into();
+        //     builder.build()
+        // },
     ];
 
     let len = simulations.len();

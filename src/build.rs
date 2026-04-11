@@ -10,6 +10,7 @@ use super::{
 
 const MEGA: Float = 1e6;
 const KILO: Float = 1e3;
+const MICRO: Float = 1e-6;
 const NANO: Float = 1e-9;
 
 pub trait Invalid {
@@ -100,14 +101,14 @@ pub struct SimulationBuilder {
 impl Default for SimulationBuilder {
     fn default() -> Self {
         use ValueOrFn::Value;
-        let small_saxis: Float = 75.0 * NANO;
+        let big_saxis: Float = 2.5 * MICRO;
         let mag_moment_density: Float = 380.0 * KILO;
 
         Self {
             fill_fraction: 0.01,
             particle_number: 500,
-            small_saxis: 75.0 * NANO,
-            big_saxis: small_saxis * 3.5,
+            small_saxis: big_saxis / 3.5,
+            big_saxis,
             mag_moment_density: 380.0 * KILO,
             viscosity: Value(3.5),
             epsilon_mat: 2.0,
@@ -276,7 +277,9 @@ impl SimulationBuilder {
             dir_vel: vec![Vec3::default(); params.particle_number],
             params,
         };
-        this.update_el_dipoles();
+        unsafe {
+            this.update_el_dipoles();
+        }
         this
     }
 }
