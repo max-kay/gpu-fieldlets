@@ -11,7 +11,6 @@ use super::{
 const MEGA: Float = 1e6;
 const KILO: Float = 1e3;
 const MICRO: Float = 1e-6;
-const NANO: Float = 1e-9;
 
 pub trait Invalid {
     const INVALID: Self;
@@ -90,10 +89,9 @@ pub struct SimulationBuilder {
 
     pub repulsion_factor: Float,
 
-    pub delta_time: Float,
     pub duration: Float,
 
-    pub log_step: usize,
+    pub log_frames: u32,
     pub seed: Option<u64>,
     pub name: String,
 }
@@ -118,9 +116,8 @@ impl Default for SimulationBuilder {
             e_field_norm: Value(100.0 * MEGA),
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
-            delta_time: 0.00001,
             duration: 1.0,
-            log_step: 1000,
+            log_frames: 100,
             seed: None,
             name: String::new(),
         }
@@ -148,10 +145,9 @@ pub struct SimulationParameters {
 
     pub repulsion_factor: Float,
 
-    pub delta_time: Float,
     pub duration: Float,
 
-    pub log_step: usize,
+    pub log_frames: u32,
     pub seed: u64,
     pub name: String,
 
@@ -222,10 +218,9 @@ impl Into<SimulationParameters> for SimulationBuilder {
 
             repulsion_factor: self.repulsion_factor,
 
-            delta_time: self.delta_time,
             duration: self.duration,
 
-            log_step: self.log_step,
+            log_frames: self.log_frames,
             seed,
             name: self.name,
             particle_vol,

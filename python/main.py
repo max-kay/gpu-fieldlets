@@ -99,7 +99,7 @@ def run_on_path(path):
     )
 
     for i in frames:
-        frame_n = f"{i:0>8}"
+        frame_n = f"{i:0>5}"
         p_file = path + "/" + frame_n + "_pos.npy"
         d_file = path + "/" + frame_n + "_dir.npy"
         if os.path.exists(d_file):
@@ -112,7 +112,7 @@ def run_on_path(path):
                 a=config["big_saxis"],
                 c=config["small_saxis"],
                 rve_side_len=config["rve_side_len"],
-                title=f"{config["name"]} {1000 * config["delta_time"] * i:.1f} ms",
+                title=f"{config["name"]} {config["duration"] * config["log_frames"] * i:.1f} ms",
                 iteration=i,
             )
     print("\nMaking animation: ", config["name"])
