@@ -88,6 +88,7 @@ pub struct SimulationBuilder {
     pub e_field_norm: ValueOrFn<Float>,
 
     pub repulsion_factor: Float,
+    pub velocity_factor: Float,
 
     pub duration: Float,
 
@@ -117,6 +118,7 @@ impl Default for SimulationBuilder {
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
             duration: 1.0,
+            velocity_factor: 1.0 / 3.0,
             log_frames: 100,
             seed: None,
             name: String::new(),
@@ -144,6 +146,7 @@ pub struct SimulationParameters {
     e_field_norm: ValueOrFn<Float>,
 
     pub repulsion_factor: Float,
+    pub velocity_factor: Float,
 
     pub duration: Float,
 
@@ -217,6 +220,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
             e_field_norm: self.e_field_norm,
 
             repulsion_factor: self.repulsion_factor,
+            velocity_factor: self.velocity_factor,
 
             duration: self.duration,
 
@@ -272,9 +276,7 @@ impl SimulationBuilder {
             dir_vel: vec![Vec3::default(); params.particle_number],
             params,
         };
-        unsafe {
-            this.update_el_dipoles();
-        }
+        this.update_el_dipoles();
         this
     }
 }

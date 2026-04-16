@@ -51,7 +51,7 @@ struct Simulation {
 
 /// physics functions
 impl Simulation {
-    unsafe fn update_e_field(&mut self, time: Float) {
+    fn update_e_field(&mut self, time: Float) {
         unsafe {
             for i in 0..self.params.particle_number {
                 let mut e_field_i = self.params.ext_e_field(time);
@@ -79,7 +79,7 @@ impl Simulation {
         }
     }
 
-    unsafe fn update_h_field(&mut self, time: Float) {
+    fn update_h_field(&mut self, time: Float) {
         for i in 0..self.params.particle_number {
             unsafe {
                 let mut h_field_i = self.params.ext_h_field(time);
@@ -104,7 +104,7 @@ impl Simulation {
         }
     }
 
-    unsafe fn update_el_dipoles(&mut self) {
+    fn update_el_dipoles(&mut self) {
         for (i, p) in self.el_dipole_moments.iter_mut().enumerate() {
             unsafe {
                 *p = self.params.particle_vol
@@ -120,7 +120,7 @@ impl Simulation {
         }
     }
 
-    unsafe fn update_p_vels(&mut self, time: Float) {
+    fn update_p_vels(&mut self, time: Float) {
         self.pos_vel
             .iter_mut()
             .for_each(|p| *p = Vec3::new(0.0, 0.0, 0.0));
@@ -183,7 +183,7 @@ impl Simulation {
         }
     }
 
-    unsafe fn update_d_vels(&mut self, time: Float) {
+    fn update_d_vels(&mut self, time: Float) {
         unsafe {
             for i in 0..self.params.particle_number {
                 let magnetic = MU_0
@@ -213,7 +213,7 @@ impl Simulation {
         }
     }
 
-    unsafe fn update_positions(&mut self, delta_t: Float) {
+    fn update_positions(&mut self, delta_t: Float) {
         self.positions
             .iter_mut()
             .zip(self.pos_vel.iter())
@@ -222,7 +222,7 @@ impl Simulation {
             });
     }
 
-    unsafe fn update_directions(&mut self, delta_t: Float) {
+    fn update_directions(&mut self, delta_t: Float) {
         self.directions
             .iter_mut()
             .zip(self.dir_vel.iter())
@@ -262,17 +262,18 @@ impl Simulation {
         let mut current_time = 0.0;
         let mut i = 0;
         let mut stdout = std::io::stdout();
-        let mut delta_t = 0.0;
+        let mut delta_t;
+        let mut last_delta_t = vec![0.0; 64];
         let mut log_step = 0;
         let start = std::time::Instant::now();
         let success = loop {
             let _ = write!(
                 stdout.lock(),
-                "{: >8.5} s/{: >8.5} s   ∆t = {: >8.2e}   i = {: >8}\r",
+                "{: >8.5} s/{: >6.2} s   ∆t = {: >8.2e} s  i = {: >8}\r",
                 current_time,
                 self.params.duration,
-                delta_t,
-                i
+                last_delta_t.iter().sum::<Float>() / last_delta_t.len() as Float,
+                i,
             );
             let _ = stdout.flush();
 
@@ -283,34 +284,36 @@ impl Simulation {
                 log_step += 1;
             }
 
-            unsafe {
-                for _ in 0..2 {
-                    self.update_e_field(current_time);
-                    self.update_el_dipoles();
-                }
-
-                self.update_h_field(current_time);
-
-                self.update_p_vels(current_time);
-                self.update_d_vels(current_time);
-
-                let largest_velocity = self
-                    .pos_vel
-                    .iter()
-                    .map(|v| v.norm())
-                    .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
-                    .unwrap_or(0.0);
-                delta_t = self.params.radius_eq / 3.0 / largest_velocity;
-
-                self.update_positions(delta_t);
-                self.update_directions(delta_t);
+            for _ in 0..2 {
+                self.update_e_field(current_time);
+                self.update_el_dipoles();
             }
+
+            self.update_h_field(current_time);
+
+            self.update_p_vels(current_time);
+            self.update_d_vels(current_time);
+
+            let largest_velocity = self
+                .pos_vel
+                .iter()
+                .map(|v| v.norm())
+                .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less))
+                .unwrap_or(0.0);
+            delta_t = self.params.radius_eq * self.params.velocity_factor / largest_velocity;
+
+            self.update_positions(delta_t);
+            self.update_directions(delta_t);
 
             if !self.all_bufs_finite() {
                 break false;
             }
             i += 1;
             current_time += delta_t;
+            {
+                let idx = i % last_delta_t.len();
+                last_delta_t[idx] = delta_t;
+            }
             if current_time > self.params.duration {
                 break true;
             }
@@ -360,10 +363,12 @@ fn start_plotting(path: &str) -> Result<std::process::Child, std::io::Error> {
 }
 
 fn main() {
-    let mut simulations: Vec<_> = (0..15)
+    let mut simulations: Vec<_> = (8..15)
         .map(|i| {
             let mut b = Simulation::new();
             b.repulsion_factor = i as Float * 2.0 + 14.0;
+            b.duration = 0.2;
+            b.name = format!("test with beta = {}", b.repulsion_factor);
             b.build()
         })
         .collect();
@@ -390,7 +395,6 @@ fn main() {
         for (i, s) in simulations.iter_mut().enumerate() {
             println!("\rsimulation of `{}` {}/{}", s.params.name, i + 1, len);
             let summary = s.run();
-            println!("beta = {}", s.params.repulsion_factor);
             if summary.success {
                 println!("success");
             } else {
