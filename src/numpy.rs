@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-use crate::{Float, math::Vec3};
+use crate::math::Vec3;
 
 fn format_shape(vec: &[usize]) -> String {
     let mut res = String::from("(");
@@ -69,7 +69,7 @@ pub trait Numpy: Sized {
 }
 
 impl Numpy for &[Vec3] {
-    type DTYPE = Float;
+    type DTYPE = f32;
 
     fn shape(&self) -> Vec<usize> {
         vec![self.len(), 3]
@@ -86,7 +86,7 @@ impl Numpy for &[Vec3] {
 }
 
 impl<const N: usize> Numpy for &[[Vec3; N]] {
-    type DTYPE = Float;
+    type DTYPE = f32;
     fn shape(&self) -> Vec<usize> {
         vec![self.len(), N, 3]
     }
@@ -102,8 +102,8 @@ impl<const N: usize> Numpy for &[[Vec3; N]] {
         Ok(())
     }
 }
-impl<const N: usize> Numpy for &[[Float; N]] {
-    type DTYPE = Float;
+impl<const N: usize> Numpy for &[[f32; N]] {
+    type DTYPE = f32;
     fn shape(&self) -> Vec<usize> {
         vec![self.len(), N]
     }
@@ -118,8 +118,8 @@ impl<const N: usize> Numpy for &[[Float; N]] {
     }
 }
 
-impl Numpy for &[Float] {
-    type DTYPE = Float;
+impl Numpy for &[f32] {
+    type DTYPE = f32;
 
     fn shape(&self) -> Vec<usize> {
         vec![self.len()]

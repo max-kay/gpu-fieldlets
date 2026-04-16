@@ -1,16 +1,17 @@
+use std::f32::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
 use rand::prelude::*;
 
 use super::{
-    Float, PI, Simulation, Vec3,
+    Simulation, Vec3,
     math::{Bounded, UnitVec},
 };
 
-const MEGA: Float = 1e6;
-const KILO: Float = 1e3;
-const MICRO: Float = 1e-6;
+const MEGA: f32 = 1e6;
+const KILO: f32 = 1e3;
+const MICRO: f32 = 1e-6;
 
 pub trait Invalid {
     const INVALID: Self;
@@ -23,16 +24,16 @@ impl Invalid for f64 {
 }
 impl Invalid for Vec3 {
     const INVALID: Self = Vec3 {
-        x: Float::NAN,
-        y: Float::NAN,
-        z: Float::NAN,
+        x: f32::NAN,
+        y: f32::NAN,
+        z: f32::NAN,
     };
 }
 
 #[derive(Clone)]
 pub enum ValueOrFn<T: Invalid> {
     Value(T),
-    Fn(fn(Float) -> T),
+    Fn(fn(f32) -> T),
 }
 impl<T: Invalid + serde::Serialize> serde::Serialize for ValueOrFn<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -53,14 +54,14 @@ impl<T: Invalid> From<T> for ValueOrFn<T> {
     }
 }
 
-impl<T: Invalid> From<fn(Float) -> T> for ValueOrFn<T> {
-    fn from(value: fn(Float) -> T) -> Self {
+impl<T: Invalid> From<fn(f32) -> T> for ValueOrFn<T> {
+    fn from(value: fn(f32) -> T) -> Self {
         Self::Fn(value)
     }
 }
 
 impl<T: Copy + Invalid> ValueOrFn<T> {
-    pub fn get(&self, time: Float) -> T {
+    pub fn get(&self, time: f32) -> T {
         match self {
             ValueOrFn::Value(v) => *v,
             ValueOrFn::Fn(f) => f(time),
@@ -70,27 +71,27 @@ impl<T: Copy + Invalid> ValueOrFn<T> {
 
 #[derive(Clone, serde::Serialize)]
 pub struct SimulationBuilder {
-    pub fill_fraction: Float,
+    pub fill_fraction: f32,
     pub particle_number: usize,
-    pub small_saxis: Float,
-    pub big_saxis: Float,
+    pub small_saxis: f32,
+    pub big_saxis: f32,
 
-    pub mag_moment_density: Float,
+    pub mag_moment_density: f32,
 
-    pub viscosity: ValueOrFn<Float>,
+    pub viscosity: ValueOrFn<f32>,
 
-    pub epsilon_mat: Float,
-    pub epsilon_part: Float,
+    pub epsilon_mat: f32,
+    pub epsilon_part: f32,
 
     pub h_field_dir: ValueOrFn<Vec3>,
-    pub h_field_norm: ValueOrFn<Float>,
+    pub h_field_norm: ValueOrFn<f32>,
     pub e_field_dir: ValueOrFn<Vec3>,
-    pub e_field_norm: ValueOrFn<Float>,
+    pub e_field_norm: ValueOrFn<f32>,
 
-    pub repulsion_factor: Float,
-    pub velocity_factor: Float,
+    pub repulsion_factor: f32,
+    pub velocity_factor: f32,
 
-    pub duration: Float,
+    pub duration: f32,
 
     pub log_frames: u32,
     pub seed: Option<u64>,
@@ -100,8 +101,8 @@ pub struct SimulationBuilder {
 impl Default for SimulationBuilder {
     fn default() -> Self {
         use ValueOrFn::Value;
-        let big_saxis: Float = 2.5 * MICRO;
-        let mag_moment_density: Float = 380.0 * KILO;
+        let big_saxis: f32 = 2.5 * MICRO;
+        let mag_moment_density: f32 = 380.0 * KILO;
 
         Self {
             fill_fraction: 0.01,
@@ -128,51 +129,51 @@ impl Default for SimulationBuilder {
 
 #[derive(Clone, serde::Serialize)]
 pub struct SimulationParameters {
-    pub fill_fraction: Float,
+    pub fill_fraction: f32,
     pub particle_number: usize,
-    pub small_saxis: Float,
-    pub big_saxis: Float,
+    pub small_saxis: f32,
+    pub big_saxis: f32,
 
-    pub mag_moment_density: Float,
+    pub mag_moment_density: f32,
 
-    viscosity: ValueOrFn<Float>,
+    viscosity: ValueOrFn<f32>,
 
-    pub epsilon_mat: Float,
-    pub epsilon_part: Float,
+    pub epsilon_mat: f32,
+    pub epsilon_part: f32,
 
     h_field_dir: ValueOrFn<Vec3>,
-    h_field_norm: ValueOrFn<Float>,
+    h_field_norm: ValueOrFn<f32>,
     e_field_dir: ValueOrFn<Vec3>,
-    e_field_norm: ValueOrFn<Float>,
+    e_field_norm: ValueOrFn<f32>,
 
-    pub repulsion_factor: Float,
-    pub velocity_factor: Float,
+    pub repulsion_factor: f32,
+    pub velocity_factor: f32,
 
-    pub duration: Float,
+    pub duration: f32,
 
     pub log_frames: u32,
     pub seed: u64,
     pub name: String,
 
-    pub particle_vol: Float,
-    pub rve_side_len: Float,
-    pub radius_eq: Float,
-    pub e_sus_x: Float,
-    pub e_sus_z: Float,
-    pub mag_dipole: Float,
+    pub particle_vol: f32,
+    pub rve_side_len: f32,
+    pub radius_eq: f32,
+    pub e_sus_x: f32,
+    pub e_sus_z: f32,
+    pub mag_dipole: f32,
 }
 
 impl SimulationParameters {
-    pub fn t_drag(&self, time: Float) -> Float {
+    pub fn t_drag(&self, time: f32) -> f32 {
         6.0 * PI * self.viscosity.get(time) * self.radius_eq
     }
-    pub fn r_drag(&self, time: Float) -> Float {
+    pub fn r_drag(&self, time: f32) -> f32 {
         8.0 * PI * self.viscosity.get(time) * self.big_saxis.powi(2) * self.small_saxis
     }
-    pub fn ext_e_field(&self, time: Float) -> Vec3 {
+    pub fn ext_e_field(&self, time: f32) -> Vec3 {
         self.e_field_norm.get(time) * self.e_field_dir.get(time)
     }
-    pub fn ext_h_field(&self, time: Float) -> Vec3 {
+    pub fn ext_h_field(&self, time: f32) -> Vec3 {
         self.h_field_norm.get(time) * self.h_field_dir.get(time)
     }
 
@@ -187,7 +188,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
     fn into(self) -> SimulationParameters {
         let particle_vol = 4.0 / 3.0 * PI * self.big_saxis.powi(2) * self.small_saxis;
         let rve_side_len =
-            (particle_vol * self.particle_number as Float / self.fill_fraction).powf(1.0 / 3.0);
+            (particle_vol * self.particle_number as f32 / self.fill_fraction).powf(1.0 / 3.0);
         let radius_eq = (self.big_saxis.powi(2) * self.small_saxis).powf(1.0 / 3.0);
         let shape_factor = self.small_saxis / (2.0 * self.big_saxis)
             * (PI / 2.0 + self.small_saxis / self.big_saxis);

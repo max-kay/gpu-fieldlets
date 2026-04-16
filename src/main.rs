@@ -1,5 +1,6 @@
 use std::{
     error::Error,
+    f32::consts::PI,
     fs::File,
     io::Write,
     path::Path,
@@ -8,10 +9,8 @@ use std::{
 
 use chrono::{self, Local};
 
-type Float = f64;
-const PI: Float = std::f64::consts::PI as Float;
-const EPSILON_0: Float = 8.8541878188e-12;
-const MU_0: Float = 1.2566370612e-6;
+const EPSILON_0: f32 = 8.8541878188e-12;
+const MU_0: f32 = 1.2566370612e-6;
 
 mod build;
 mod math;
@@ -27,7 +26,7 @@ struct SimulationSummary {
     iterations_ran: usize,
     log_dir: String,
     success: bool,
-    time_ran: Float,
+    time_ran: f32,
 }
 
 impl SimulationSummary {
@@ -51,7 +50,7 @@ struct Simulation {
 
 /// physics functions
 impl Simulation {
-    fn update_e_field(&mut self, time: Float) {
+    fn update_e_field(&mut self, time: f32) {
         unsafe {
             for i in 0..self.params.particle_number {
                 let mut e_field_i = self.params.ext_e_field(time);
@@ -79,7 +78,7 @@ impl Simulation {
         }
     }
 
-    fn update_h_field(&mut self, time: Float) {
+    fn update_h_field(&mut self, time: f32) {
         for i in 0..self.params.particle_number {
             unsafe {
                 let mut h_field_i = self.params.ext_h_field(time);
@@ -120,7 +119,7 @@ impl Simulation {
         }
     }
 
-    fn update_p_vels(&mut self, time: Float) {
+    fn update_p_vels(&mut self, time: f32) {
         self.pos_vel
             .iter_mut()
             .for_each(|p| *p = Vec3::new(0.0, 0.0, 0.0));
@@ -171,7 +170,7 @@ impl Simulation {
                         * ((((-self.params.repulsion_factor
                             * (dist / (2.0 * self.params.radius_eq) - 1.0))
                             as f32)
-                            .exp() as Float)
+                            .exp() as f32)
                             * r_ji_hat);
 
                     let f = (f_h + f_e + f_r) / self.params.t_drag(time);
@@ -183,7 +182,7 @@ impl Simulation {
         }
     }
 
-    fn update_d_vels(&mut self, time: Float) {
+    fn update_d_vels(&mut self, time: f32) {
         unsafe {
             for i in 0..self.params.particle_number {
                 let magnetic = MU_0
@@ -213,7 +212,7 @@ impl Simulation {
         }
     }
 
-    fn update_positions(&mut self, delta_t: Float) {
+    fn update_positions(&mut self, delta_t: f32) {
         self.positions
             .iter_mut()
             .zip(self.pos_vel.iter())
@@ -222,7 +221,7 @@ impl Simulation {
             });
     }
 
-    fn update_directions(&mut self, delta_t: Float) {
+    fn update_directions(&mut self, delta_t: f32) {
         self.directions
             .iter_mut()
             .zip(self.dir_vel.iter())
@@ -272,12 +271,12 @@ impl Simulation {
                 "{: >8.5} s/{: >6.2} s   ∆t = {: >8.2e} s  i = {: >8}\r",
                 current_time,
                 self.params.duration,
-                last_delta_t.iter().sum::<Float>() / last_delta_t.len() as Float,
+                last_delta_t.iter().sum::<f32>() / last_delta_t.len() as f32,
                 i,
             );
             let _ = stdout.flush();
 
-            if current_time > (log_step as Float / self.params.log_frames as Float) {
+            if current_time > (log_step as f32 / self.params.log_frames as f32) {
                 if let Err(err) = self.log_state(&format!("./{log_step:0>5}"), &log_dir) {
                     eprintln!("could not log: {err}");
                 }
@@ -366,7 +365,7 @@ fn main() {
     let mut simulations: Vec<_> = (8..15)
         .map(|i| {
             let mut b = Simulation::new();
-            b.repulsion_factor = i as Float * 2.0 + 14.0;
+            b.repulsion_factor = i as f32 * 2.0 + 14.0;
             b.duration = 0.2;
             b.name = format!("test with beta = {}", b.repulsion_factor);
             b.build()
@@ -402,7 +401,7 @@ fn main() {
             }
             println!(
                 "average ∆t = {:.3e} s",
-                summary.time_ran / summary.iterations_ran as Float
+                summary.time_ran / summary.iterations_ran as f32
             );
             println!()
         }

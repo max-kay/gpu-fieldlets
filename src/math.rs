@@ -1,8 +1,7 @@
-use super::{Float, PI};
 use std::{
+    f32::consts::PI,
     fmt,
-    ops::{Add, Div, Mul, Neg, Sub},
-    ops::{AddAssign, Rem, RemAssign},
+    ops::{Add, AddAssign, Div, Mul, Neg, Rem, RemAssign, Sub},
 };
 
 use rand::{
@@ -16,9 +15,9 @@ pub trait GoodValues {
     fn is_finite(&self) -> bool;
 }
 
-impl GoodValues for Float {
+impl GoodValues for f32 {
     fn is_finite(&self) -> bool {
-        Float::is_finite(*self)
+        f32::is_finite(*self)
     }
 }
 
@@ -26,9 +25,9 @@ pub struct UnitVec;
 
 impl Distribution<Vec3> for UnitVec {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec3 {
-        fn box_muller<R: Rng + ?Sized>(rng: &mut R) -> (Float, Float) {
-            let u1: Float = rng.sample(OpenClosed01);
-            let u2: Float = rng.sample(OpenClosed01);
+        fn box_muller<R: Rng + ?Sized>(rng: &mut R) -> (f32, f32) {
+            let u1: f32 = rng.sample(OpenClosed01);
+            let u2: f32 = rng.sample(OpenClosed01);
             let r = (-2.0 * (u1.ln())).sqrt();
             let theta = 2.0 * PI * u2;
             (r * theta.cos(), r * theta.sin())
@@ -40,7 +39,7 @@ impl Distribution<Vec3> for UnitVec {
     }
 }
 
-pub struct Bounded(pub Float);
+pub struct Bounded(pub f32);
 
 impl Distribution<Vec3> for Bounded {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec3 {
@@ -56,9 +55,9 @@ impl Distribution<Vec3> for Bounded {
 #[derive(Clone, Copy, Default, PartialEq)]
 #[repr(C)]
 pub struct Vec3 {
-    pub x: Float,
-    pub y: Float,
-    pub z: Float,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
 }
 
 // To serialize the entire struct as a sequence
@@ -104,19 +103,19 @@ impl GoodValues for Vec<Vec3> {
 }
 
 impl Vec3 {
-    pub fn new(x: Float, y: Float, z: Float) -> Self {
+    pub fn new(x: f32, y: f32, z: f32) -> Self {
         Self { x, y, z }
     }
 
-    pub fn dot(self, other: Self) -> Float {
+    pub fn dot(self, other: Self) -> f32 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    pub fn norm_sq(self) -> Float {
+    pub fn norm_sq(self) -> f32 {
         self.dot(self)
     }
 
-    pub fn norm(self) -> Float {
+    pub fn norm(self) -> f32 {
         self.norm_sq().sqrt()
     }
 
@@ -155,11 +154,11 @@ impl Sub for Vec3 {
     }
 }
 
-impl Rem<Float> for Vec3 {
+impl Rem<f32> for Vec3 {
     type Output = Vec3;
 
-    fn rem(self, rhs: Float) -> Self::Output {
-        fn in_b(val: Float, side_len: Float) -> Float {
+    fn rem(self, rhs: f32) -> Self::Output {
+        fn in_b(val: f32, side_len: f32) -> f32 {
             val - (val / side_len).round() * side_len
         }
         Self {
@@ -169,8 +168,8 @@ impl Rem<Float> for Vec3 {
         }
     }
 }
-impl RemAssign<Float> for Vec3 {
-    fn rem_assign(&mut self, rhs: Float) {
+impl RemAssign<f32> for Vec3 {
+    fn rem_assign(&mut self, rhs: f32) {
         *self = *self % rhs;
     }
 }
@@ -181,10 +180,10 @@ impl AddAssign for Vec3 {
     }
 }
 
-impl Mul<Float> for Vec3 {
+impl Mul<f32> for Vec3 {
     type Output = Self;
 
-    fn mul(self, rhs: Float) -> Self::Output {
+    fn mul(self, rhs: f32) -> Self::Output {
         Self {
             x: rhs * self.x,
             y: rhs * self.y,
@@ -192,7 +191,7 @@ impl Mul<Float> for Vec3 {
         }
     }
 }
-impl Mul<Vec3> for Float {
+impl Mul<Vec3> for f32 {
     type Output = Vec3;
 
     fn mul(self, rhs: Vec3) -> Self::Output {
@@ -204,10 +203,10 @@ impl Mul<Vec3> for Float {
     }
 }
 
-impl Div<Float> for Vec3 {
+impl Div<f32> for Vec3 {
     type Output = Vec3;
 
-    fn div(self, rhs: Float) -> Self::Output {
+    fn div(self, rhs: f32) -> Self::Output {
         self * (1.0 / rhs)
     }
 }
