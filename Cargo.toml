@@ -8,6 +8,9 @@ chrono = "0.4.44"
 rand = "0.10.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
+objc2-metal = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2 = "0.6.4"
 
 [profile.release]
 debug = true

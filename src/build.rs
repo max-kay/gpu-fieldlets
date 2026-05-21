@@ -1,8 +1,7 @@
+use rand::prelude::*;
 use std::f32::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
-
-use rand::prelude::*;
 
 use super::{
     Simulation, Vec3,
@@ -27,6 +26,7 @@ impl Invalid for Vec3 {
         x: f32::NAN,
         y: f32::NAN,
         z: f32::NAN,
+        _pad: 0.0,
     };
 }
 
@@ -118,9 +118,9 @@ impl Default for SimulationBuilder {
             e_field_norm: Value(100.0 * MEGA),
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
-            duration: 1.0,
+            duration: 3.0,
             velocity_factor: 1.0 / 3.0,
-            log_frames: 100,
+            log_frames: 50,
             seed: None,
             name: String::new(),
         }
@@ -190,8 +190,10 @@ impl Into<SimulationParameters> for SimulationBuilder {
         let rve_side_len =
             (particle_vol * self.particle_number as f32 / self.fill_fraction).powf(1.0 / 3.0);
         let radius_eq = (self.big_saxis.powi(2) * self.small_saxis).powf(1.0 / 3.0);
-        let shape_factor = self.small_saxis / (2.0 * self.big_saxis)
-            * (PI / 2.0 + self.small_saxis / self.big_saxis);
+        let shape_factor = (self.big_saxis.powi(2) * self.small_saxis)
+            / (2.0 * (self.big_saxis.powi(2) - self.small_saxis.powi(2)))
+            * (PI / 2.0 / (self.big_saxis.powi(2) - self.small_saxis.powi(2)).sqrt()
+                - self.small_saxis / self.big_saxis.powi(2));
         let e_sus_x = (self.epsilon_part - self.epsilon_mat)
             / (1.0 + (self.epsilon_part - self.epsilon_mat) / self.epsilon_mat * shape_factor);
         let e_sus_z = (self.epsilon_part - self.epsilon_mat)
@@ -264,19 +266,13 @@ impl SimulationBuilder {
             }
         }
 
-        let mut this = Simulation {
-            positions,
-            directions: (&mut rng)
-                .sample_iter(UnitVec)
-                .take(params.particle_number)
-                .collect(),
-            el_dipole_moments: vec![Vec3::default(); params.particle_number],
-            e_field: vec![params.ext_e_field(0.0); params.particle_number],
-            h_field: vec![Vec3::default(); params.particle_number],
-            pos_vel: vec![Vec3::default(); params.particle_number],
-            dir_vel: vec![Vec3::default(); params.particle_number],
-            params,
-        };
+        let directions: Vec<Vec3> = (&mut rng)
+            .sample_iter(UnitVec)
+            .take(params.particle_number)
+            .collect();
+        let metal = crate::gpu::MetalState::new(&params, &positions, &directions);
+
+        let this = Simulation { params, metal };
         this.update_el_dipoles();
         this
     }

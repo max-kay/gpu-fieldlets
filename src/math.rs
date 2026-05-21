@@ -11,16 +11,6 @@ use rand::{
 
 use serde::{Serialize, Serializer};
 
-pub trait GoodValues {
-    fn is_finite(&self) -> bool;
-}
-
-impl GoodValues for f32 {
-    fn is_finite(&self) -> bool {
-        f32::is_finite(*self)
-    }
-}
-
 pub struct UnitVec;
 
 impl Distribution<Vec3> for UnitVec {
@@ -34,7 +24,7 @@ impl Distribution<Vec3> for UnitVec {
         }
         let (x, y) = box_muller(rng);
         let (z, _) = box_muller(rng);
-        let vec = Vec3 { x, y, z };
+        let vec = Vec3::new(x, y, z);
         vec.normalised()
     }
 }
@@ -44,20 +34,21 @@ pub struct Bounded(pub f32);
 impl Distribution<Vec3> for Bounded {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec3 {
         let distr = Uniform::new(-self.0 / 2.0, self.0 / 2.0).unwrap();
-        Vec3 {
-            x: rng.sample(distr),
-            y: rng.sample(distr),
-            z: rng.sample(distr),
-        }
+        Vec3::new(
+            rng.sample(distr),
+            rng.sample(distr),
+            rng.sample(distr),
+        )
     }
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
-#[repr(C)]
+#[repr(C, align(16))]
 pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    pub _pad: f32,
 }
 
 // To serialize the entire struct as a sequence
@@ -87,24 +78,9 @@ impl fmt::Debug for Vec3 {
     }
 }
 
-impl GoodValues for Vec3 {
-    fn is_finite(&self) -> bool {
-        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
-    }
-}
-
-impl GoodValues for Vec<Vec3> {
-    fn is_finite(&self) -> bool {
-        self.iter()
-            .map(|v| v.is_finite())
-            .reduce(|acc, x| acc && x)
-            .unwrap_or(true)
-    }
-}
-
 impl Vec3 {
     pub fn new(x: f32, y: f32, z: f32) -> Self {
-        Self { x, y, z }
+        Self { x, y, z, _pad: 0.0 }
     }
 
     pub fn dot(self, other: Self) -> f32 {
@@ -128,22 +104,22 @@ impl Add for Vec3 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-            z: self.z + rhs.z,
-        }
+        Self::new(
+            self.x + rhs.x,
+            self.y + rhs.y,
+            self.z + rhs.z,
+        )
     }
 }
 impl Neg for Vec3 {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Self {
-            x: -self.x,
-            y: -self.y,
-            z: -self.z,
-        }
+        Self::new(
+            -self.x,
+            -self.y,
+            -self.z,
+        )
     }
 }
 impl Sub for Vec3 {
@@ -161,11 +137,11 @@ impl Rem<f32> for Vec3 {
         fn in_b(val: f32, side_len: f32) -> f32 {
             val - (val / side_len).round() * side_len
         }
-        Self {
-            x: in_b(self.x, rhs),
-            y: in_b(self.y, rhs),
-            z: in_b(self.z, rhs),
-        }
+        Self::new(
+            in_b(self.x, rhs),
+            in_b(self.y, rhs),
+            in_b(self.z, rhs),
+        )
     }
 }
 impl RemAssign<f32> for Vec3 {
@@ -184,22 +160,22 @@ impl Mul<f32> for Vec3 {
     type Output = Self;
 
     fn mul(self, rhs: f32) -> Self::Output {
-        Self {
-            x: rhs * self.x,
-            y: rhs * self.y,
-            z: rhs * self.z,
-        }
+        Self::new(
+            rhs * self.x,
+            rhs * self.y,
+            rhs * self.z,
+        )
     }
 }
 impl Mul<Vec3> for f32 {
     type Output = Vec3;
 
     fn mul(self, rhs: Vec3) -> Self::Output {
-        Vec3 {
-            x: self * rhs.x,
-            y: self * rhs.y,
-            z: self * rhs.z,
-        }
+        Vec3::new(
+            self * rhs.x,
+            self * rhs.y,
+            self * rhs.z,
+        )
     }
 }
 
