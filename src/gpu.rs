@@ -1,3 +1,6 @@
+use std::ptr::NonNull;
+
+use dispatch2::DispatchData;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
@@ -5,10 +8,10 @@ use objc2_metal::{
     MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
     MTLResourceOptions, MTLSize,
 };
-use std::ptr::NonNull;
 
 use crate::build::SimulationParameters;
 use crate::math::Vec3;
+use crate::numpy::Numpy;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -32,7 +35,7 @@ pub struct GPUParams {
 #[derive(Copy, Clone)]
 pub struct FrameSpec {
     pub dims: [u32; 2],
-    pub particle_count: u32,
+    pub particle_number: u32,
     pub oversamples: u32,
     pub cam_root: Vec3,
     pub cam_s1: Vec3,
@@ -52,7 +55,6 @@ pub enum Stage {
     PVels,
     UpdatePositions(f32),
     UpdateDirections(f32),
-    Check,
 }
 
 pub struct MetalState {
@@ -64,35 +66,35 @@ pub struct MetalState {
     pipeline_positions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_directions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_check: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_render: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 
-    pub buf_positions: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_directions: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_positions: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_directions: Retained<ProtocolObject<dyn MTLBuffer>>,
     buf_el_dipole_moments: Retained<ProtocolObject<dyn MTLBuffer>>,
     buf_e_field: Retained<ProtocolObject<dyn MTLBuffer>>,
     buf_h_field: Retained<ProtocolObject<dyn MTLBuffer>>,
     buf_pos_vel: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_check_output: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_check_output: Retained<ProtocolObject<dyn MTLBuffer>>,
 
     buf_img: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
+
+const SHADER_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 
 impl MetalState {
     pub fn new(params: &SimulationParameters, positions: &[Vec3], directions: &[Vec3]) -> Self {
         let device = MTLCreateSystemDefaultDevice().expect("no metal device");
         let queue = device.newCommandQueue().unwrap();
 
-        let source = std::fs::read_to_string("src/lib.metal").unwrap();
-        let source_ns = NSString::from_str(&source);
-        let options = objc2_metal::MTLCompileOptions::new();
         let library = device
-            .newLibraryWithSource_options_error(&source_ns, Some(&options))
-            .expect("failed to compile metal shader");
+            .newLibraryWithData_error(DispatchData::from_static_bytes(SHADER_BYTES).as_ref())
+            .expect("failed to load embedded metal library");
 
         let get_pipeline = |name: &str| {
             let name_ns = NSString::from_str(name);
             let function = library
                 .newFunctionWithName(&name_ns)
-                .expect("function not found");
+                .expect(&format!("function `{}` not found", name));
             device
                 .newComputePipelineStateWithFunction_error(&function)
                 .unwrap()
@@ -109,6 +111,7 @@ impl MetalState {
             pipeline_positions: get_pipeline("update_positions"),
             pipeline_directions: get_pipeline("update_directions"),
             pipeline_check: get_pipeline("check_finite_and_max_vel"),
+            pipeline_render: get_pipeline("render_kernel"),
 
             buf_positions: unsafe {
                 device
@@ -164,7 +167,8 @@ impl MetalState {
 
             buf_img: device
                 .newBufferWithLength_options(
-                    size_of::<u32>() * (params.screen.0 * params.screen.1) as NSUInteger,
+                    size_of::<u32>()
+                        * (params.camera.dims[0] * params.camera.dims[1]) as NSUInteger,
                     MTLResourceOptions::StorageModeShared,
                 )
                 .unwrap(),
@@ -230,43 +234,6 @@ impl MetalState {
                     ],
                     Some(dt),
                 ),
-                Stage::Check => {
-                    encoder.setComputePipelineState(&self.pipeline_check);
-                    let buffers = [
-                        &*self.buf_el_dipole_moments,
-                        &*self.buf_e_field,
-                        &*self.buf_h_field,
-                        &*self.buf_positions,
-                        &*self.buf_directions,
-                        &*self.buf_pos_vel,
-                        &*self.buf_check_output,
-                    ];
-                    for (i, buf) in buffers.iter().enumerate() {
-                        encoder.setBuffer_offset_atIndex(Some(*buf), 0, i as _);
-                    }
-                    encoder.setBytes_length_atIndex(
-                        NonNull::new(params as *const _ as *mut _).unwrap(),
-                        std::mem::size_of::<GPUParams>(),
-                        buffers.len() as _,
-                    );
-
-                    let grid_size = MTLSize {
-                        width: 1,
-                        height: 1,
-                        depth: 1,
-                    };
-                    let thread_group_size = MTLSize {
-                        width: 1,
-                        height: 1,
-                        depth: 1,
-                    };
-                    encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
-
-                    encoder.endEncoding();
-                    command_buffer.commit();
-                    command_buffer.waitUntilCompleted();
-                    return;
-                }
             };
 
             encoder.setComputePipelineState(pipeline);
@@ -308,5 +275,104 @@ impl MetalState {
         encoder.endEncoding();
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
+    }
+
+    pub fn run_max_and_check(&self, params: &GPUParams) -> (f32, bool) {
+        let command_buffer = self.queue.commandBuffer().unwrap();
+        let encoder = command_buffer.computeCommandEncoder().unwrap();
+
+        encoder.setComputePipelineState(&self.pipeline_check);
+        let buffers = [
+            &*self.buf_el_dipole_moments,
+            &*self.buf_e_field,
+            &*self.buf_h_field,
+            &*self.buf_positions,
+            &*self.buf_directions,
+            &*self.buf_pos_vel,
+            &*self.buf_check_output,
+        ];
+        unsafe {
+            for (i, buf) in buffers.iter().enumerate() {
+                encoder.setBuffer_offset_atIndex(Some(*buf), 0, i as _);
+            }
+            encoder.setBytes_length_atIndex(
+                NonNull::new(params as *const _ as *mut _).unwrap(),
+                std::mem::size_of::<GPUParams>(),
+                buffers.len() as _,
+            );
+        }
+
+        let grid_size = MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+        let thread_group_size = MTLSize {
+            width: 1,
+            height: 1,
+            depth: 1,
+        };
+        encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
+
+        encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+        let output = unsafe {
+            std::slice::from_raw_parts(self.buf_check_output.contents().as_ptr() as *const f32, 2)
+        };
+        (output[0], output[1] > 0.5)
+    }
+
+    pub fn run_plotting(&self, spec: &FrameSpec) {
+        let command_buffer = self.queue.commandBuffer().unwrap();
+        let encoder = command_buffer.computeCommandEncoder().unwrap();
+        encoder.setComputePipelineState(&self.pipeline_render);
+
+        unsafe {
+            encoder.setBuffer_offset_atIndex(Some(&*self.buf_img), 0, 0);
+            encoder.setBuffer_offset_atIndex(Some(&*self.buf_positions), 0, 1);
+            encoder.setBuffer_offset_atIndex(Some(&*self.buf_directions), 0, 2);
+            encoder.setBytes_length_atIndex(
+                NonNull::new(spec as *const _ as *mut _).unwrap(),
+                std::mem::size_of::<GPUParams>(),
+                3,
+            );
+        }
+
+        let grid_size = MTLSize {
+            width: 16,
+            height: 16,
+            depth: 1,
+        };
+        let thread_group_size = MTLSize {
+            width: (spec.dims[0] as usize + grid_size.width - 1) / grid_size.width,
+            height: (spec.dims[1] as usize + grid_size.height - 1) / grid_size.height,
+            depth: 1,
+        };
+        encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
+        encoder.endEncoding();
+        command_buffer.commit();
+        command_buffer.waitUntilCompleted();
+    }
+
+    pub fn log_state(&self, name: &str, dir: &str, particle_number: usize) -> std::io::Result<()> {
+        let positions: Vec<Vec3> = unsafe {
+            std::slice::from_raw_parts(
+                self.buf_positions.contents().as_ptr() as *const Vec3,
+                particle_number,
+            )
+            .to_vec()
+        };
+        let directions: Vec<Vec3> = unsafe {
+            std::slice::from_raw_parts(
+                self.buf_directions.contents().as_ptr() as *const Vec3,
+                particle_number,
+            )
+            .to_vec()
+        };
+
+        positions.write_npy(&format!("{}/{}_pos.npy", dir, name))?;
+        directions.write_npy(&format!("{}/{}_dir.npy", dir, name))?;
+        Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use std::{error::Error, fs::File, io::Write, path::Path};
+use std::{error::Error, fs::File, io::Write, path::Path, process::Command};
 
 use chrono::{self, Local};
 
@@ -10,10 +10,7 @@ mod numpy;
 use build::{SimulationBuilder, SimulationParameters};
 use gpu::{GPUParams, MetalState, Stage};
 use math::Vec3;
-use numpy::Numpy;
 use serde::Serialize;
-
-use objc2_metal::*;
 
 #[derive(Serialize)]
 struct SimulationSummary {
@@ -106,9 +103,15 @@ impl Simulation {
             let _ = stdout.flush();
 
             if current_time
-                > (log_step as f32 / self.params.log_frames as f32) * self.params.duration
+                >= (log_step as f32 / self.params.log_frames as f32) * self.params.duration
             {
-                if let Err(err) = self.log_state(&format!("./{log_step:0>5}"), &log_dir) {
+                self.metal
+                    .run_plotting(&self.params.frame_spec(current_time));
+                if let Err(err) = self.metal.log_state(
+                    &format!("./{log_step:0>5}"),
+                    &log_dir,
+                    self.params.particle_number,
+                ) {
                     eprintln!("could not log: {err}");
                 }
                 log_step += 1;
@@ -116,28 +119,20 @@ impl Simulation {
 
             let params = self.gpu_params(current_time);
 
-            for _ in 0..2 {
+            for _ in 0..5 {
                 self.metal.run_stage(Stage::EField, &params);
                 self.metal.run_stage(Stage::ElDipoles, &params);
             }
             self.metal.run_stage(Stage::HField, &params);
             self.metal.run_stage(Stage::PVels, &params);
 
-            self.metal.run_stage(Stage::Check, &params);
-
-            let output = unsafe {
-                std::slice::from_raw_parts(
-                    self.metal.buf_check_output.contents().as_ptr() as *const f32,
-                    2,
-                )
-            };
-            let (largest_velocity, finite) = (output[0], output[1] > 0.5);
+            let (max_vel, finite) = self.metal.run_max_and_check(&params);
 
             if !finite {
                 break false;
             }
 
-            let delta_t = self.params.radius_eq * self.params.velocity_factor / largest_velocity;
+            let delta_t = self.params.radius_eq * self.params.velocity_factor / max_vel;
 
             self.metal
                 .run_stage(Stage::UpdatePositions(delta_t), &params);
@@ -154,7 +149,11 @@ impl Simulation {
                 break true;
             }
         };
-        if let Err(err) = self.log_state(&format!("{log_step:0>5}"), &log_dir) {
+        if let Err(err) = self.metal.log_state(
+            &format!("{log_step:0>5}"),
+            &log_dir,
+            self.params.particle_number,
+        ) {
             eprintln!("could not log: {err}");
         }
         let real_time = start.elapsed().as_secs_f32();
@@ -171,34 +170,15 @@ impl Simulation {
         println!("\nfinished in {:.0} s", real_time);
         return summary;
     }
-
-    fn log_state(&self, name: &str, dir: &str) -> std::io::Result<()> {
-        let positions: Vec<Vec3> = unsafe {
-            std::slice::from_raw_parts(
-                self.metal.buf_positions.contents().as_ptr() as *const Vec3,
-                self.params.particle_number,
-            )
-            .to_vec()
-        };
-        let directions: Vec<Vec3> = unsafe {
-            std::slice::from_raw_parts(
-                self.metal.buf_directions.contents().as_ptr() as *const Vec3,
-                self.params.particle_number,
-            )
-            .to_vec()
-        };
-
-        positions.write_npy(&format!("{}/{}_pos.npy", dir, name))?;
-        directions.write_npy(&format!("{}/{}_dir.npy", dir, name))?;
-        Ok(())
-    }
 }
 
 fn main() {
+    use build::ValueOrFn::{Fn, Value};
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
         b.duration = 0.1;
         b.particle_number = 200;
+        b.h_field_norm = Value(0.0);
         b.build()
     }];
     let len = simulations.len();
@@ -215,6 +195,15 @@ fn main() {
             summary.simulation_time / summary.iterations_ran as f32
         );
         println!("log dir: `{}`", summary.log_dir);
-        println!()
+        println!();
+        if Command::new("circle-animate")
+            .args(&[&summary.log_dir, "new.mp4"])
+            .output()
+            .is_ok()
+        {
+            println!("created animation")
+        } else {
+            println!("failed to create animation")
+        };
     }
 }

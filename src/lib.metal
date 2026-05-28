@@ -1,5 +1,6 @@
 #include <metal_stdlib>
 using namespace metal;
+
 #define EPSILON_0 8.8541878188e-12
 #define MU_0 1.25663706127e-6
 
@@ -161,10 +162,9 @@ kernel void update_positions(device float4 *positions [[buffer(0)]],
   if (i >= params.particle_number)
     return;
 
-  positions[i] =
-      float4(mod_rve(positions[i].xyz + pos_vel[i].xyz * delta_t,
-                     params.rve_side_len),
-             0.0);
+  positions[i] = float4(
+      mod_rve(positions[i].xyz + pos_vel[i].xyz * delta_t, params.rve_side_len),
+      0.0);
 }
 
 kernel void update_directions(device float4 *directions [[buffer(0)]],
@@ -187,8 +187,7 @@ kernel void update_directions(device float4 *directions [[buffer(0)]],
 
   float3 dir_vel = (magnetic + electric) / params.r_drag;
 
-  directions[i] = float4(
-      normalize(d_i + delta_t * dir_vel), 0.0);
+  directions[i] = float4(normalize(d_i + delta_t * dir_vel), 0.0);
 }
 
 kernel void

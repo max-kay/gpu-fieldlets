@@ -3,6 +3,8 @@ use std::f32::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
+use crate::gpu::FrameSpec;
+
 use super::{
     Simulation, Vec3,
     math::{Bounded, UnitVec},
@@ -97,7 +99,7 @@ pub struct SimulationBuilder {
 
     pub name: String,
     pub log_frames: u32,
-    pub screen: (u32, u32),
+    pub camera: CameraBuilder,
 }
 
 impl Default for SimulationBuilder {
@@ -125,7 +127,7 @@ impl Default for SimulationBuilder {
             log_frames: 50,
             seed: None,
             name: String::new(),
-            screen: (1000, 800),
+            camera: CameraBuilder::default(),
         }
     }
 }
@@ -165,7 +167,7 @@ pub struct SimulationParameters {
 
     pub name: String,
     pub log_frames: u32,
-    pub screen: (u32, u32),
+    pub camera: CameraBuilder,
 }
 
 impl SimulationParameters {
@@ -186,6 +188,30 @@ impl SimulationParameters {
         let file = File::create(path)?;
         serde_json::ser::to_writer_pretty(file, &self)?;
         Ok(())
+    }
+
+    pub fn frame_spec(&self, time: f32) -> FrameSpec {
+        let root = self.rve_side_len * self.camera.root.get(time);
+        let dist = root.norm();
+        let scale =
+            self.rve_side_len / (self.camera.dims[0].min(self.camera.dims[1]) as f32) / dist;
+        let dir = -root.normalised();
+        let u_s2 = dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
+        let u_s1 = u_s2.cross(dir).normalised();
+        FrameSpec {
+            dims: self.camera.dims,
+            particle_number: self.particle_number as u32,
+            oversamples: self.camera.oversamples,
+            cam_root: root,
+            cam_s1: u_s1 * scale,
+            cam_s2: u_s2 * scale,
+            cam_dir: dir,
+            ell_axes: Vec3::new(self.big_saxis, self.big_saxis, self.small_saxis),
+            ell_color: self.camera.particle_color,
+            light_dir: self.camera.light_dir,
+            bg_color: self.camera.background,
+            ambient_light: self.camera.ambient_light,
+        }
     }
 }
 
@@ -241,7 +267,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
             e_sus_x,
             e_sus_z,
             mag_dipole,
-            screen: self.screen,
+            camera: self.camera,
         }
     }
 }
@@ -281,5 +307,31 @@ impl SimulationBuilder {
         let this = Simulation { params, metal };
         this.update_el_dipoles();
         this
+    }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct CameraBuilder {
+    pub dims: [u32; 2],
+    pub root: ValueOrFn<Vec3>,
+    pub oversamples: u32,
+    pub background: Vec3,
+    pub particle_color: Vec3,
+    pub light_dir: Vec3,
+    pub ambient_light: f32,
+}
+
+impl Default for CameraBuilder {
+    fn default() -> Self {
+        use ValueOrFn::Value;
+        Self {
+            dims: [1000, 600],
+            root: Value(Vec3::new(0.8, 0.2, 1.2)),
+            oversamples: 3,
+            background: Vec3::new(1.0, 1.0, 1.0),
+            particle_color: Vec3::new(0.3, 0.12, 0.8),
+            light_dir: Vec3::new(-0.8, 0.4, 2.5).normalised(),
+            ambient_light: 0.8,
+        }
     }
 }

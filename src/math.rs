@@ -34,11 +34,7 @@ pub struct Bounded(pub f32);
 impl Distribution<Vec3> for Bounded {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Vec3 {
         let distr = Uniform::new(-self.0 / 2.0, self.0 / 2.0).unwrap();
-        Vec3::new(
-            rng.sample(distr),
-            rng.sample(distr),
-            rng.sample(distr),
-        )
+        Vec3::new(rng.sample(distr), rng.sample(distr), rng.sample(distr))
     }
 }
 
@@ -87,6 +83,15 @@ impl Vec3 {
         self.x * other.x + self.y * other.y + self.z * other.z
     }
 
+    pub fn cross(self, other: Self) -> Self {
+        Self {
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+            _pad: 0.0,
+        }
+    }
+
     pub fn norm_sq(self) -> f32 {
         self.dot(self)
     }
@@ -104,22 +109,14 @@ impl Add for Vec3 {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Self::new(
-            self.x + rhs.x,
-            self.y + rhs.y,
-            self.z + rhs.z,
-        )
+        Self::new(self.x + rhs.x, self.y + rhs.y, self.z + rhs.z)
     }
 }
 impl Neg for Vec3 {
     type Output = Self;
 
     fn neg(self) -> Self::Output {
-        Self::new(
-            -self.x,
-            -self.y,
-            -self.z,
-        )
+        Self::new(-self.x, -self.y, -self.z)
     }
 }
 impl Sub for Vec3 {
@@ -137,11 +134,7 @@ impl Rem<f32> for Vec3 {
         fn in_b(val: f32, side_len: f32) -> f32 {
             val - (val / side_len).round() * side_len
         }
-        Self::new(
-            in_b(self.x, rhs),
-            in_b(self.y, rhs),
-            in_b(self.z, rhs),
-        )
+        Self::new(in_b(self.x, rhs), in_b(self.y, rhs), in_b(self.z, rhs))
     }
 }
 impl RemAssign<f32> for Vec3 {
@@ -160,22 +153,14 @@ impl Mul<f32> for Vec3 {
     type Output = Self;
 
     fn mul(self, rhs: f32) -> Self::Output {
-        Self::new(
-            rhs * self.x,
-            rhs * self.y,
-            rhs * self.z,
-        )
+        Self::new(rhs * self.x, rhs * self.y, rhs * self.z)
     }
 }
 impl Mul<Vec3> for f32 {
     type Output = Vec3;
 
     fn mul(self, rhs: Vec3) -> Self::Output {
-        Vec3::new(
-            self * rhs.x,
-            self * rhs.y,
-            self * rhs.z,
-        )
+        Vec3::new(self * rhs.x, self * rhs.y, self * rhs.z)
     }
 }
 
