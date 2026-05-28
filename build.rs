@@ -12,20 +12,43 @@ fn main() {
     let render_air = out_dir.join("render.air");
     let metallib = out_dir.join("shaders.metallib");
 
+    // Compile lib.metal with optimizations
     let status = Command::new("xcrun")
-        .args(&["-sdk", "macosx", "metal", "-c", "src/lib.metal", "-o"])
+        .args(&[
+            "-sdk",
+            "macosx",
+            "metal",
+            "-c",
+            "-O3",
+            "-ffast-math",
+            "-flto",
+            "src/lib.metal",
+            "-o",
+        ])
         .arg(&lib_air)
         .status()
         .expect("Failed to run metal compiler for lib.metal");
     assert!(status.success(), "Failed to compile lib.metal");
 
+    // Compile render.metal with optimizations
     let status = Command::new("xcrun")
-        .args(&["-sdk", "macosx", "metal", "-c", "src/render.metal", "-o"])
+        .args(&[
+            "-sdk",
+            "macosx",
+            "metal",
+            "-c",
+            "-O3",
+            "-ffast-math",
+            "-flto",
+            "src/render.metal",
+            "-o",
+        ])
         .arg(&render_air)
         .status()
         .expect("Failed to run metal compiler for render.metal");
     assert!(status.success(), "Failed to compile render.metal");
 
+    // Link into final metallib
     let status = Command::new("xcrun")
         .args(&["-sdk", "macosx", "metallib"])
         .arg(&lib_air)
