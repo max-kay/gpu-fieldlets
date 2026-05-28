@@ -2,14 +2,14 @@ use std::{error::Error, fs::File, io::Write, path::Path, process::Command};
 
 use chrono::{self, Local};
 
-mod build;
 mod gpu;
 mod math;
 mod numpy;
+mod params;
 
-use build::{SimulationBuilder, SimulationParameters};
 use gpu::{GPUParams, MetalState, Stage};
 use math::Vec3;
+use params::{SimulationBuilder, SimulationParameters};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -173,7 +173,7 @@ impl Simulation {
 }
 
 fn main() {
-    use build::ValueOrFn::{Fn, Value};
+    use params::ValueOrFn::{Fn, Value};
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
         b.duration = 0.1;

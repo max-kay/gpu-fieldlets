@@ -9,9 +9,9 @@ use objc2_metal::{
     MTLResourceOptions, MTLSize,
 };
 
-use crate::build::SimulationParameters;
 use crate::math::Vec3;
 use crate::numpy::Numpy;
+use crate::params::SimulationParameters;
 
 #[repr(C)]
 #[derive(Copy, Clone)]
