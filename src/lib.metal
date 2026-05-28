@@ -24,6 +24,10 @@ float3 mod_rve(float3 r, float side_len) {
   return r - round(r / side_len) * side_len;
 }
 
+float3 field_bracket_term(float3 rji, float3 dj) {
+  return 3.0 * dot(dj, rji) * rji - dj;
+}
+
 kernel void update_e_field(device const float4 *positions [[buffer(0)]],
                            device const float4 *el_dipole_moments [[buffer(1)]],
                            device float4 *e_field [[buffer(2)]],
@@ -46,8 +50,7 @@ kernel void update_e_field(device const float4 *positions [[buffer(0)]],
     float prefactor =
         1.0 / (4.0 * M_PI_F * EPSILON_0 * params.epsilon_mat) / pow(dist, 3);
     float3 e_ji =
-        prefactor * (3.0 * dot(el_dipole_moments[j].xyz, r_ji_hat) * r_ji_hat -
-                     el_dipole_moments[j].xyz);
+        prefactor * field_bracket_term(r_ji_hat, el_dipole_moments[j].xyz);
     e_field_i += e_ji;
   }
   e_field[i] = float4(e_field_i, 0.0);
@@ -73,9 +76,7 @@ kernel void update_h_field(device const float4 *positions [[buffer(0)]],
     float3 r_ji_hat = r_ji / dist;
 
     float prefactor = params.mag_dipole / (4.0 * M_PI_F) / pow(dist, 3);
-    float3 h_ji =
-        prefactor *
-        (3.0 * dot(directions[j].xyz, r_ji_hat) * r_ji_hat - directions[j].xyz);
+    float3 h_ji = prefactor * field_bracket_term(r_ji_hat, directions[j].xyz);
     h_field_i += h_ji;
   }
   h_field[i] = float4(h_field_i, 0.0);
@@ -97,6 +98,13 @@ kernel void update_el_dipoles(device const float4 *e_field [[buffer(0)]],
                  (params.e_sus_x * e_i +
                   (params.e_sus_z - params.e_sus_x) * dot(d_i, e_i) * d_i),
              0.0);
+}
+
+float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
+  float f1_dot = dot(di, dj) - 5.0 * dot(rji, dj) * dot(rji, di);
+  float3 f1 = f1_dot * rji;
+  float3 f2 = dot(rji, di) * dj + dot(rji, dj) * di;
+  return f1 + f2;
 }
 
 kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
@@ -122,24 +130,14 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
-    float f_h1_dot =
-        dot(dir_i, directions[j].xyz) -
-        5.0 * dot(r_ji_hat, directions[j].xyz) * dot(r_ji_hat, dir_i);
-    float3 f_h1 = f_h1_dot * r_ji_hat;
-    float3 f_h2 = dot(r_ji_hat, dir_i) * directions[j].xyz +
-                  dot(r_ji_hat, directions[j].xyz) * dir_i;
     float3 f_h = 3.0 * MU_0 * pow(params.mag_dipole, 2) / 4.0 / M_PI_F /
-                 pow(dist, 4) * (f_h1 + f_h2);
+                 pow(dist, 4) *
+                 force_bracket_term(r_ji_hat, dir_i, directions[j].xyz);
 
     // electric
-    float f_e1_dot =
-        dot(dipole_i, el_dipole_moments[j].xyz) -
-        5.0 * dot(r_ji_hat, el_dipole_moments[j].xyz) * dot(r_ji_hat, dipole_i);
-    float3 f_e1 = f_e1_dot * r_ji_hat;
-    float3 f_e2 = dot(r_ji_hat, dipole_i) * el_dipole_moments[j].xyz +
-                  dot(r_ji_hat, el_dipole_moments[j].xyz) * dipole_i;
-    float3 f_e = 3.0 / EPSILON_0 / params.epsilon_mat / 2.0 / M_PI_F /
-                 pow(dist, 4) * (f_e1 + f_e2);
+    float3 f_e =
+        3.0 / EPSILON_0 / params.epsilon_mat / 2.0 / M_PI_F / pow(dist, 4) *
+        force_bracket_term(r_ji_hat, dipole_i, el_dipole_moments[j].xyz);
 
     // repulsive
     float3 f_r = 3.0 * MU_0 * pow(params.mag_dipole, 2) /
