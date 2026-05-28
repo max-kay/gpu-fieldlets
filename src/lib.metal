@@ -17,7 +17,6 @@ struct GPUParams {
   float r_drag;
   float4 ext_e_field;
   float4 ext_h_field;
-  float delta_t;
 };
 
 float3 mod_rve(float3 r, float side_len) {
@@ -154,12 +153,26 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
   pos_vel[i] = float4(total_f / params.t_drag, 0.0);
 }
 
-kernel void update_d_vels(device const float4 *h_field [[buffer(0)]],
-                          device const float4 *e_field [[buffer(1)]],
-                          device const float4 *directions [[buffer(2)]],
-                          device float4 *dir_vel [[buffer(3)]],
-                          constant GPUParams &params [[buffer(4)]],
-                          uint i [[thread_position_in_grid]]) {
+kernel void update_positions(device float4 *positions [[buffer(0)]],
+                             device const float4 *pos_vel [[buffer(1)]],
+                             constant float &delta_t [[buffer(2)]],
+                             constant GPUParams &params [[buffer(3)]],
+                             uint i [[thread_position_in_grid]]) {
+  if (i >= params.particle_number)
+    return;
+
+  positions[i] =
+      float4(mod_rve(positions[i].xyz + pos_vel[i].xyz * delta_t,
+                     params.rve_side_len),
+             0.0);
+}
+
+kernel void update_directions(device float4 *directions [[buffer(0)]],
+                              device const float4 *h_field [[buffer(1)]],
+                              device const float4 *e_field [[buffer(2)]],
+                              constant float &delta_t [[buffer(3)]],
+                              constant GPUParams &params [[buffer(4)]],
+                              uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
 
@@ -172,31 +185,10 @@ kernel void update_d_vels(device const float4 *h_field [[buffer(0)]],
                     (params.e_sus_z - params.e_sus_x) * dot(e_i, d_i) *
                     (e_i - d_i * dot(e_i, d_i));
 
-  dir_vel[i] = float4((magnetic + electric) / params.r_drag, 0.0);
-}
-
-kernel void update_positions(device float4 *positions [[buffer(0)]],
-                             device const float4 *pos_vel [[buffer(1)]],
-                             constant GPUParams &params [[buffer(2)]],
-                             uint i [[thread_position_in_grid]]) {
-  if (i >= params.particle_number)
-    return;
-
-  positions[i] =
-      float4(mod_rve(positions[i].xyz + pos_vel[i].xyz * params.delta_t,
-                     params.rve_side_len),
-             0.0);
-}
-
-kernel void update_directions(device float4 *directions [[buffer(0)]],
-                              device const float4 *dir_vel [[buffer(1)]],
-                              constant GPUParams &params [[buffer(2)]],
-                              uint i [[thread_position_in_grid]]) {
-  if (i >= params.particle_number)
-    return;
+  float3 dir_vel = (magnetic + electric) / params.r_drag;
 
   directions[i] = float4(
-      normalize(directions[i].xyz + params.delta_t * dir_vel[i].xyz), 0.0);
+      normalize(d_i + delta_t * dir_vel), 0.0);
 }
 
 kernel void
@@ -206,9 +198,8 @@ check_finite_and_max_vel(device const float4 *el_dipole_moments [[buffer(0)]],
                          device const float4 *positions [[buffer(3)]],
                          device const float4 *directions [[buffer(4)]],
                          device const float4 *pos_vel [[buffer(5)]],
-                         device const float4 *dir_vel [[buffer(6)]],
-                         device float *output [[buffer(7)]],
-                         constant GPUParams &params [[buffer(8)]],
+                         device float *output [[buffer(6)]],
+                         constant GPUParams &params [[buffer(7)]],
                          uint i [[thread_position_in_grid]]) {
   if (i != 0)
     return;
@@ -225,7 +216,6 @@ check_finite_and_max_vel(device const float4 *el_dipole_moments [[buffer(0)]],
     finite &= all(isfinite(positions[j]));
     finite &= all(isfinite(directions[j]));
     finite &= all(isfinite(pos_vel[j]));
-    finite &= all(isfinite(dir_vel[j]));
 
     if (!finite)
       break;

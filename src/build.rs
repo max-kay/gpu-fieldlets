@@ -119,7 +119,7 @@ impl Default for SimulationBuilder {
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
             duration: 3.0,
-            velocity_factor: 1.0 / 3.0,
+            velocity_factor: 0.5,
             log_frames: 50,
             seed: None,
             name: String::new(),
