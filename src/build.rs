@@ -93,9 +93,11 @@ pub struct SimulationBuilder {
 
     pub duration: f32,
 
-    pub log_frames: u32,
     pub seed: Option<u64>,
+
     pub name: String,
+    pub log_frames: u32,
+    pub screen: (u32, u32),
 }
 
 impl Default for SimulationBuilder {
@@ -123,6 +125,7 @@ impl Default for SimulationBuilder {
             log_frames: 50,
             seed: None,
             name: String::new(),
+            screen: (1000, 800),
         }
     }
 }
@@ -151,9 +154,7 @@ pub struct SimulationParameters {
 
     pub duration: f32,
 
-    pub log_frames: u32,
     pub seed: u64,
-    pub name: String,
 
     pub particle_vol: f32,
     pub rve_side_len: f32,
@@ -161,6 +162,10 @@ pub struct SimulationParameters {
     pub e_sus_x: f32,
     pub e_sus_z: f32,
     pub mag_dipole: f32,
+
+    pub name: String,
+    pub log_frames: u32,
+    pub screen: (u32, u32),
 }
 
 impl SimulationParameters {
@@ -236,6 +241,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
             e_sus_x,
             e_sus_z,
             mag_dipole,
+            screen: self.screen,
         }
     }
 }

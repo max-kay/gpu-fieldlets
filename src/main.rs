@@ -37,7 +37,6 @@ pub struct Simulation {
     metal: MetalState,
 }
 
-/// physics functions
 impl Simulation {
     fn gpu_params(&self, time: f32) -> GPUParams {
         GPUParams {
@@ -63,7 +62,6 @@ impl Simulation {
     }
 }
 
-/// Method for the simulation
 impl Simulation {
     fn new() -> SimulationBuilder {
         SimulationBuilder::default()
@@ -199,8 +197,8 @@ impl Simulation {
 fn main() {
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
-        b.duration = 0.3;
-        b.particle_number = 2000;
+        b.duration = 0.1;
+        b.particle_number = 200;
         b.build()
     }];
     let len = simulations.len();
@@ -216,6 +214,7 @@ fn main() {
             "average ∆t = {:.3e} s",
             summary.simulation_time / summary.iterations_ran as f32
         );
+        println!("log dir: `{}`", summary.log_dir);
         println!()
     }
 }

@@ -1,6 +1,10 @@
 use objc2::{rc::Retained, runtime::ProtocolObject};
-use objc2_foundation::NSString;
-use objc2_metal::*;
+use objc2_foundation::{NSString, NSUInteger};
+use objc2_metal::{
+    MTLBuffer, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLComputeCommandEncoder,
+    MTLComputePipelineState, MTLCreateSystemDefaultDevice, MTLDevice, MTLLibrary,
+    MTLResourceOptions, MTLSize,
+};
 use std::ptr::NonNull;
 
 use crate::build::SimulationParameters;
@@ -24,6 +28,23 @@ pub struct GPUParams {
     pub ext_h_field: Vec3,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct FrameSpec {
+    pub dims: [u32; 2],
+    pub particle_count: u32,
+    pub oversamples: u32,
+    pub cam_root: Vec3,
+    pub cam_s1: Vec3,
+    pub cam_s2: Vec3,
+    pub cam_dir: Vec3,
+    pub ell_axes: Vec3,
+    pub ell_color: Vec3,
+    pub light_dir: Vec3,
+    pub bg_color: Vec3,
+    pub ambient_light: f32,
+}
+
 pub enum Stage {
     EField,
     HField,
@@ -35,22 +56,24 @@ pub enum Stage {
 }
 
 pub struct MetalState {
-    pub queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    pub pipeline_e_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_h_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_el_dipoles: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_p_vels: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_positions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_directions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
-    pub pipeline_check: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
+    pipeline_e_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_h_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_el_dipoles: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_p_vels: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_positions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_directions: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
+    pipeline_check: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
 
     pub buf_positions: Retained<ProtocolObject<dyn MTLBuffer>>,
     pub buf_directions: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_el_dipole_moments: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_e_field: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_h_field: Retained<ProtocolObject<dyn MTLBuffer>>,
-    pub buf_pos_vel: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_el_dipole_moments: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_e_field: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_h_field: Retained<ProtocolObject<dyn MTLBuffer>>,
+    buf_pos_vel: Retained<ProtocolObject<dyn MTLBuffer>>,
     pub buf_check_output: Retained<ProtocolObject<dyn MTLBuffer>>,
+
+    buf_img: Retained<ProtocolObject<dyn MTLBuffer>>,
 }
 
 impl MetalState {
@@ -60,7 +83,7 @@ impl MetalState {
 
         let source = std::fs::read_to_string("src/lib.metal").unwrap();
         let source_ns = NSString::from_str(&source);
-        let options = MTLCompileOptions::new();
+        let options = objc2_metal::MTLCompileOptions::new();
         let library = device
             .newLibraryWithSource_options_error(&source_ns, Some(&options))
             .expect("failed to compile metal shader");
@@ -75,17 +98,6 @@ impl MetalState {
                 .unwrap()
         };
 
-        let buf = |data: &[Vec3]| unsafe {
-            device
-                .newBufferWithBytes_length_options(
-                    NonNull::new(data.as_ptr() as *mut _).unwrap(),
-                    std::mem::size_of_val(data),
-                    MTLResourceOptions::StorageModeShared,
-                )
-                .unwrap()
-        };
-
-        let zeros = vec![Vec3::default(); params.particle_number];
         let ext_e = vec![params.ext_e_field(0.0); params.particle_number];
 
         Self {
@@ -98,14 +110,63 @@ impl MetalState {
             pipeline_directions: get_pipeline("update_directions"),
             pipeline_check: get_pipeline("check_finite_and_max_vel"),
 
-            buf_positions: buf(positions),
-            buf_directions: buf(directions),
-            buf_el_dipole_moments: buf(&zeros),
-            buf_e_field: buf(&ext_e),
-            buf_h_field: buf(&zeros),
-            buf_pos_vel: buf(&zeros),
+            buf_positions: unsafe {
+                device
+                    .newBufferWithBytes_length_options(
+                        NonNull::new(positions.as_ptr() as *mut _).unwrap(),
+                        std::mem::size_of_val(positions),
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .unwrap()
+            },
+            buf_directions: unsafe {
+                device
+                    .newBufferWithBytes_length_options(
+                        NonNull::new(directions.as_ptr() as *mut _).unwrap(),
+                        std::mem::size_of_val(directions),
+                        MTLResourceOptions::StorageModeShared,
+                    )
+                    .unwrap()
+            },
+            buf_el_dipole_moments: device
+                .newBufferWithLength_options(
+                    size_of::<Vec3>() * params.particle_number,
+                    MTLResourceOptions::StorageModePrivate,
+                )
+                .unwrap(),
+            buf_e_field: unsafe {
+                device
+                    .newBufferWithBytes_length_options(
+                        NonNull::new(ext_e.as_ptr() as *mut _).unwrap(),
+                        std::mem::size_of_val(&*ext_e),
+                        MTLResourceOptions::StorageModePrivate,
+                    )
+                    .unwrap()
+            },
+            buf_h_field: device
+                .newBufferWithLength_options(
+                    size_of::<Vec3>() * params.particle_number,
+                    MTLResourceOptions::StorageModePrivate,
+                )
+                .unwrap(),
+            buf_pos_vel: device
+                .newBufferWithLength_options(
+                    size_of::<Vec3>() * params.particle_number,
+                    MTLResourceOptions::StorageModePrivate,
+                )
+                .unwrap(),
             buf_check_output: device
-                .newBufferWithLength_options(8, MTLResourceOptions::StorageModeShared)
+                .newBufferWithLength_options(
+                    2 * size_of::<f32>(),
+                    MTLResourceOptions::StorageModeShared,
+                )
+                .unwrap(),
+
+            buf_img: device
+                .newBufferWithLength_options(
+                    size_of::<u32>() * (params.screen.0 * params.screen.1) as NSUInteger,
+                    MTLResourceOptions::StorageModeShared,
+                )
                 .unwrap(),
         }
     }
