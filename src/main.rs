@@ -7,7 +7,7 @@ mod math;
 mod numpy;
 mod params;
 
-use gpu::{GPUParams, MetalState, Stage};
+use gpu::{MetalState, Stage};
 use math::Vec3;
 use params::{SimulationBuilder, SimulationParameters};
 use serde::Serialize;
@@ -160,8 +160,8 @@ fn main() {
         let mut b = Simulation::new();
         b.duration = 0.2;
         b.particle_number = 200;
-        b.h_field_norm = Value(0.0);
-        // b.e_field_norm = Value(0.0);
+        // b.h_field_norm = Value(0.0);
+        b.e_field_norm = Value(0.0);
         b.log_frames = 300;
         b.build()
     }];
@@ -190,7 +190,6 @@ fn main() {
             .args(&["-pix_fmt", "yuv420p"])
             .args(&["-g", "12"])
             .arg(format!("{}_{}.mp4", summary.log_dir, s.params.name))
-            // ffmpeg -loglevel error -hide_banner -framerate 24 -i frame_%05d.png -c:v libx264 -pix_fmt yuv420p -g 12 output.mp4
             .output()
             .is_ok()
         {

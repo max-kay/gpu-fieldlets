@@ -1,23 +1,28 @@
 #include <metal_stdlib>
 using namespace metal;
 
-#define EPSILON_0 8.8541878188e-12
-#define MU_0 1.25663706127e-6
-
 struct GPUParams {
-  uint particle_number;
-  float rve_side_len;
-  float epsilon_mat;
-  float mag_dipole;
-  float particle_vol;
-  float e_sus_x;
-  float e_sus_z;
-  float radius_eq;
-  float repulsion_factor;
-  float t_drag;
-  float r_drag;
   float4 ext_h_field;
   float4 ext_e_field;
+
+  uint particle_number;
+  float h_field_prefactor;
+  float e_field_prefactor;
+  float left_dipole_prefactor;
+
+  float right_dipole_prefactor;
+  float h_force_prefactor;
+  float e_force_prefactor;
+  float r_force_prefactor;
+
+  float h_torque_prefactor;
+  float e_torque_prefactor;
+  float rve_side_len;
+  float repulsion_factor;
+
+  float radius_eq;
+  float t_drag;
+  float r_drag;
 };
 
 float3 mod_rve(float3 r, float side_len) {
@@ -47,11 +52,8 @@ kernel void update_e_field(device const float4 *positions [[buffer(0)]],
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
-    float prefactor =
-        1.0 / (4.0 * M_PI_F * EPSILON_0 * params.epsilon_mat) / pow(dist, 3);
-    float3 e_ji =
-        prefactor * field_bracket_term(r_ji_hat, el_dipole_moments[j].xyz);
-    e_field_i += e_ji;
+    e_field_i += params.e_field_prefactor / pow(dist, 3) *
+                 field_bracket_term(r_ji_hat, el_dipole_moments[j].xyz);
   }
   e_field[i] = float4(e_field_i, 0.0);
 }
@@ -75,9 +77,8 @@ kernel void update_h_field(device const float4 *positions [[buffer(0)]],
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
-    float prefactor = params.mag_dipole / (4.0 * M_PI_F) / pow(dist, 3);
-    float3 h_ji = prefactor * field_bracket_term(r_ji_hat, directions[j].xyz);
-    h_field_i += h_ji;
+    h_field_i += params.h_field_prefactor / pow(dist, 3) *
+                 field_bracket_term(r_ji_hat, directions[j].xyz);
   }
   h_field[i] = float4(h_field_i, 0.0);
 }
@@ -93,11 +94,10 @@ kernel void update_el_dipoles(device const float4 *e_field [[buffer(0)]],
   float3 e_i = e_field[i].xyz;
   float3 d_i = directions[i].xyz;
 
-  el_dipole_moments[i] =
-      float4(params.particle_vol * EPSILON_0 *
-                 (params.e_sus_x * e_i +
-                  (params.e_sus_z - params.e_sus_x) * dot(d_i, e_i) * d_i),
-             0.0);
+  float3 el_dipole = params.left_dipole_prefactor * e_i +
+                     params.right_dipole_prefactor * dot(d_i, e_i) * d_i;
+
+  el_dipole_moments[i] = float4(el_dipole, 0.0);
 }
 
 float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
@@ -130,21 +130,18 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
-    float3 f_h = 3.0 * MU_0 * pow(params.mag_dipole, 2) / 4.0 / M_PI_F /
-                 pow(dist, 4) *
+    float3 f_h = params.h_force_prefactor / pow(dist, 4) *
                  force_bracket_term(r_ji_hat, dir_i, directions[j].xyz);
 
     // electric
     float3 f_e =
-        3.0 / EPSILON_0 / params.epsilon_mat / 2.0 / M_PI_F / pow(dist, 4) *
+        params.e_force_prefactor / pow(dist, 4) *
         force_bracket_term(r_ji_hat, dipole_i, el_dipole_moments[j].xyz);
 
     // repulsive
-    float3 f_r = 3.0 * MU_0 * pow(params.mag_dipole, 2) /
-                 (2.0 * M_PI_F * pow(2.0 * params.radius_eq, 4)) *
-                 (exp(-params.repulsion_factor *
-                      (dist / (2.0 * params.radius_eq) - 1.0)) *
-                  r_ji_hat);
+    float exponent =
+        -params.repulsion_factor * (dist / (2.0 * params.radius_eq) - 1.0);
+    float3 f_r = params.r_force_prefactor * (exp(exponent) * r_ji_hat);
 
     total_f += f_h + f_e + f_r;
   }
@@ -178,10 +175,9 @@ kernel void update_directions(device float4 *directions [[buffer(0)]],
   float3 e_i = e_field[i].xyz;
   float3 d_i = directions[i].xyz;
 
-  float3 magnetic = MU_0 * params.mag_dipole * (h_i - d_i * dot(h_i, d_i));
-  float3 electric = params.particle_vol * EPSILON_0 *
-                    (params.e_sus_z - params.e_sus_x) * dot(e_i, d_i) *
-                    (e_i - d_i * dot(e_i, d_i));
+  float3 magnetic = params.h_torque_prefactor * (h_i - d_i * dot(h_i, d_i));
+  float3 electric =
+      params.e_torque_prefactor * dot(e_i, d_i) * (e_i - d_i * dot(e_i, d_i));
 
   float3 dir_vel = (magnetic + electric) / params.r_drag;
 

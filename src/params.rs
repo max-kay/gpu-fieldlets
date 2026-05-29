@@ -14,6 +14,9 @@ const MEGA: f32 = 1e6;
 const KILO: f32 = 1e3;
 const MICRO: f32 = 1e-6;
 
+const EPSILON_0: f32 = 8.8541878188e-12;
+const MU_0: f32 = 1.25663706127e-6;
+
 pub trait Invalid {
     const INVALID: Self;
 }
@@ -175,7 +178,7 @@ impl SimulationParameters {
         6.0 * PI * self.viscosity.get(time) * self.radius_eq
     }
     pub fn r_drag(&self, time: f32) -> f32 {
-        8.0 * PI * self.viscosity.get(time) * self.big_saxis.powi(2) * self.small_saxis
+        8.0 * PI * self.viscosity.get(time) * self.radius_eq.powi(3)
     }
     pub fn ext_e_field(&self, time: f32) -> Vec3 {
         self.e_field_norm.get(time) * self.e_field_dir.get(time)
@@ -186,19 +189,24 @@ impl SimulationParameters {
 
     pub fn gpu_params(&self, time: f32) -> GPUParams {
         GPUParams {
+            ext_h_field: self.ext_h_field(time),
+            ext_e_field: self.ext_e_field(time),
             particle_number: self.particle_number as u32,
+            h_field_prefactor: self.mag_dipole / (4.0 * PI),
+            e_field_prefactor: 1.0 / (4.0 * PI * EPSILON_0 * self.epsilon_mat),
+            left_dipole_prefactor: self.particle_vol * EPSILON_0 * self.e_sus_x,
+            right_dipole_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
+            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2) / (4.0 * PI),
+            e_force_prefactor: 3.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI),
+            r_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
+                / (2.0 * PI * (2.0 * self.radius_eq).powi(4)),
+            h_torque_prefactor: MU_0 * self.mag_dipole,
+            e_torque_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
             rve_side_len: self.rve_side_len,
-            epsilon_mat: self.epsilon_mat,
-            mag_dipole: self.mag_dipole,
-            particle_vol: self.particle_vol,
-            e_sus_x: self.e_sus_x,
-            e_sus_z: self.e_sus_z,
-            radius_eq: self.radius_eq,
             repulsion_factor: self.repulsion_factor,
+            radius_eq: self.radius_eq,
             t_drag: self.t_drag(time),
             r_drag: self.r_drag(time),
-            ext_e_field: self.ext_e_field(time),
-            ext_h_field: self.ext_h_field(time),
         }
     }
 

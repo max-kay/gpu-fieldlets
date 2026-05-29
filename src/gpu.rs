@@ -17,19 +17,27 @@ use crate::params::SimulationParameters;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct GPUParams {
-    pub particle_number: u32,
-    pub rve_side_len: f32,
-    pub epsilon_mat: f32,
-    pub mag_dipole: f32,
-    pub particle_vol: f32,
-    pub e_sus_x: f32,
-    pub e_sus_z: f32,
-    pub radius_eq: f32,
-    pub repulsion_factor: f32,
-    pub t_drag: f32,
-    pub r_drag: f32,
     pub ext_h_field: Vec3,
     pub ext_e_field: Vec3,
+
+    pub particle_number: u32,
+    pub h_field_prefactor: f32,
+    pub e_field_prefactor: f32,
+    pub left_dipole_prefactor: f32,
+
+    pub right_dipole_prefactor: f32,
+    pub h_force_prefactor: f32,
+    pub e_force_prefactor: f32,
+    pub r_force_prefactor: f32,
+
+    pub h_torque_prefactor: f32,
+    pub e_torque_prefactor: f32,
+    pub rve_side_len: f32,
+    pub repulsion_factor: f32,
+
+    pub radius_eq: f32,
+    pub t_drag: f32,
+    pub r_drag: f32,
 }
 
 #[repr(C)]
