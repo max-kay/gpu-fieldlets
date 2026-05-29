@@ -160,8 +160,9 @@ fn main() {
         let mut b = Simulation::new();
         b.duration = 0.2;
         b.particle_number = 200;
-        // b.h_field_norm = Value(0.0);
-        b.e_field_norm = Value(0.0);
+        b.h_field_norm = Value(0.0);
+        b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
+        // b.e_field_norm = Value(0.0);
         b.log_frames = 300;
         b.build()
     }];

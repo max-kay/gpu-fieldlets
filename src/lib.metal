@@ -138,7 +138,8 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
 
     // repulsive
     float exponent =
-        -params.repulsion_factor * (dist / (2.0 * params.radius_eq) - 1.0);
+        -params.repulsion_factor *
+        (dist * params.rve_side_len / (2.0 * params.radius_eq) - 1.0);
     float3 f_r = params.r_force_prefactor * (exp(exponent) * r_ji_hat);
 
     total_f += f_h + f_e + f_r;

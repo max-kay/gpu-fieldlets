@@ -192,18 +192,20 @@ impl SimulationParameters {
             ext_h_field: self.ext_h_field(time),
             ext_e_field: self.ext_e_field(time),
             particle_number: self.particle_number as u32,
-            h_field_prefactor: self.mag_dipole / (4.0 * PI) * self.rve_side_len.powi(3),
-            e_field_prefactor: 1.0 / (4.0 * PI * EPSILON_0 * self.epsilon_mat)
-                * self.rve_side_len.powi(3),
+            h_field_prefactor: self.mag_dipole / (4.0 * PI) / self.rve_side_len.powi(3),
+            e_field_prefactor: 1.0
+                / (4.0 * PI * EPSILON_0 * self.epsilon_mat)
+                / self.rve_side_len.powi(3),
             left_dipole_prefactor: self.particle_vol * EPSILON_0 * self.e_sus_x,
             right_dipole_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
-            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2) / (4.0 * PI)
-                * self.rve_side_len.powi(4),
-            e_force_prefactor: 3.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI)
-                * self.rve_side_len.powi(4),
+            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
+                / (4.0 * PI)
+                / self.rve_side_len.powi(4),
+            e_force_prefactor: 3.0
+                / (EPSILON_0 * self.epsilon_mat * 2.0 * PI)
+                / self.rve_side_len.powi(4),
             r_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
-                / (2.0 * PI * (2.0 * self.radius_eq).powi(4))
-                * self.rve_side_len.powi(4),
+                / (2.0 * PI * (2.0 * self.radius_eq).powi(4)),
             h_torque_prefactor: MU_0 * self.mag_dipole,
             e_torque_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
             rve_side_len: self.rve_side_len,
