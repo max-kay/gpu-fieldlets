@@ -363,7 +363,7 @@ impl Default for CameraBuilder {
         use ValueOrFn::Value;
         Self {
             dims: [1000, 800],
-            root: Value(3.0 * Vec3::new(1.0, 0.0, 0.0)),
+            root: Value(3.0 * Vec3::new(1.0, 0.5, 1.0)),
             oversamples: 3,
             background: Vec3::new(1.0, 1.0, 1.0),
             particle_color: Vec3::new(0.3, 0.12, 0.8),
