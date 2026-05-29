@@ -1,7 +1,7 @@
 use std::ptr::NonNull;
 
 use dispatch2::DispatchData;
-use image::{ImageBuffer, Rgba};
+use image::{ImageBuffer, ImageResult, Rgba};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
@@ -324,7 +324,7 @@ impl MetalState {
         (output[0], output[1] > 0.5)
     }
 
-    pub fn run_plotting(&self, name: &str, dir: &str, spec: &FrameSpec) {
+    pub fn run_plotting(&self, name: &str, dir: &str, spec: &FrameSpec) -> ImageResult<()> {
         let command_buffer = self.queue.commandBuffer().unwrap();
         let encoder = command_buffer.computeCommandEncoder().unwrap();
         encoder.setComputePipelineState(&self.pipeline_render);
@@ -363,10 +363,7 @@ impl MetalState {
         let img_buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(spec.dims[0], spec.dims[1], buffer)
             .expect("Buffer size does not match the specified width and height");
 
-        // TODO: Error handling
-        img_buffer
-            .save(&format!("{}/frame_{}.png", dir, name))
-            .unwrap();
+        img_buffer.save(&format!("{}/frame_{}.png", dir, name))
     }
 
     pub fn log_state(&self, name: &str, dir: &str, particle_number: usize) -> std::io::Result<()> {

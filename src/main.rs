@@ -82,15 +82,10 @@ impl Simulation {
             if current_time
                 >= (log_step as f32 / self.params.log_frames as f32) * self.params.duration
             {
-                self.metal.run_plotting(
+                if let Err(err) = self.metal.run_plotting(
                     &format!("{log_step:0>5}"),
                     &log_dir,
                     &self.params.frame_spec(current_time),
-                );
-                if let Err(err) = self.metal.log_state(
-                    &format!("./{log_step:0>5}"),
-                    &log_dir,
-                    self.params.particle_number,
                 ) {
                     eprintln!("could not log: {err}");
                 }
@@ -99,11 +94,9 @@ impl Simulation {
 
             let params = self.params.gpu_params(current_time);
 
-            for _ in 0..2 {
+            for _ in 0..3 {
                 self.metal.run_stage(Stage::EField, &params);
-                self.metal.run_stage(Stage::HField, &params);
                 self.metal.run_stage(Stage::ElDipoles, &params);
-                self.metal.run_stage(Stage::HField, &params);
             }
             self.metal.run_stage(Stage::HField, &params);
             self.metal.run_stage(Stage::PVels, &params);
@@ -123,14 +116,20 @@ impl Simulation {
 
             i += 1;
             current_time += delta_t;
-            {
-                let idx = i % last_delta_t.len();
-                last_delta_t[idx] = delta_t;
-            }
+            let idx = i % last_delta_t.len();
+            last_delta_t[idx] = delta_t;
             if current_time > self.params.duration {
                 break true;
             }
         };
+
+        if let Err(err) = self.metal.run_plotting(
+            &format!("{log_step:0>5}"),
+            &log_dir,
+            &self.params.frame_spec(current_time),
+        ) {
+            eprintln!("could not log: {err}");
+        }
         if let Err(err) = self.metal.log_state(
             &format!("{log_step:0>5}"),
             &log_dir,
@@ -138,6 +137,7 @@ impl Simulation {
         ) {
             eprintln!("could not log: {err}");
         }
+
         let real_time = start.elapsed().as_secs_f32();
         let summary = SimulationSummary {
             iterations_ran: i,
