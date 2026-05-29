@@ -25,9 +25,7 @@ struct GPUParams {
   float r_drag;
 };
 
-float3 mod_rve(float3 r, float side_len) {
-  return r - round(r / side_len) * side_len;
-}
+float3 mod_rve(float3 r) { return r - round(r); }
 
 float3 field_bracket_term(float3 rji, float3 dj) {
   return 3.0 * dot(dj, rji) * rji - dj;
@@ -48,7 +46,7 @@ kernel void update_e_field(device const float4 *positions [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz, params.rve_side_len);
+    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
@@ -73,7 +71,7 @@ kernel void update_h_field(device const float4 *positions [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz, params.rve_side_len);
+    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
@@ -125,7 +123,7 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz, params.rve_side_len);
+    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
@@ -157,9 +155,9 @@ kernel void update_positions(device float4 *positions [[buffer(0)]],
   if (i >= params.particle_number)
     return;
 
-  positions[i] = float4(
-      mod_rve(positions[i].xyz + pos_vel[i].xyz * delta_t, params.rve_side_len),
-      0.0);
+  float3 new_pos =
+      positions[i].xyz + pos_vel[i].xyz * delta_t / params.rve_side_len;
+  positions[i] = float4(mod_rve(new_pos), 0.0);
 }
 
 kernel void update_directions(device float4 *directions [[buffer(0)]],

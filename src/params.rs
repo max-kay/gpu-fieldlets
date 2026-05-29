@@ -192,14 +192,18 @@ impl SimulationParameters {
             ext_h_field: self.ext_h_field(time),
             ext_e_field: self.ext_e_field(time),
             particle_number: self.particle_number as u32,
-            h_field_prefactor: self.mag_dipole / (4.0 * PI),
-            e_field_prefactor: 1.0 / (4.0 * PI * EPSILON_0 * self.epsilon_mat),
+            h_field_prefactor: self.mag_dipole / (4.0 * PI) * self.rve_side_len.powi(3),
+            e_field_prefactor: 1.0 / (4.0 * PI * EPSILON_0 * self.epsilon_mat)
+                * self.rve_side_len.powi(3),
             left_dipole_prefactor: self.particle_vol * EPSILON_0 * self.e_sus_x,
             right_dipole_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
-            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2) / (4.0 * PI),
-            e_force_prefactor: 3.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI),
+            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2) / (4.0 * PI)
+                * self.rve_side_len.powi(4),
+            e_force_prefactor: 3.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI)
+                * self.rve_side_len.powi(4),
             r_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
-                / (2.0 * PI * (2.0 * self.radius_eq).powi(4)),
+                / (2.0 * PI * (2.0 * self.radius_eq).powi(4))
+                * self.rve_side_len.powi(4),
             h_torque_prefactor: MU_0 * self.mag_dipole,
             e_torque_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
             rve_side_len: self.rve_side_len,
@@ -217,11 +221,10 @@ impl SimulationParameters {
     }
 
     pub fn frame_spec(&self, time: f32) -> FrameSpec {
-        let root = self.rve_side_len * self.camera.root.get(time);
+        let root = self.camera.root.get(time);
         let dist = root.norm();
-        let scale = self.rve_side_len * f32::sqrt(3.0) * 1.2
-            / (self.camera.dims[0].min(self.camera.dims[1]) as f32)
-            / dist;
+        let scale =
+            f32::sqrt(3.0) * 1.2 / (self.camera.dims[0].min(self.camera.dims[1]) as f32) / dist;
         let dir = -root.normalised();
         let u_s2 = -dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
         let u_s1 = dir.cross(u_s2).normalised();
@@ -233,7 +236,11 @@ impl SimulationParameters {
             cam_s1: u_s1 * scale,
             cam_s2: u_s2 * scale,
             cam_dir: dir,
-            ell_axes: Vec3::new(self.big_saxis, self.big_saxis, self.small_saxis),
+            ell_axes: Vec3::new(
+                self.big_saxis / self.rve_side_len,
+                self.big_saxis / self.rve_side_len,
+                self.small_saxis / self.rve_side_len,
+            ),
             ell_color: self.camera.particle_color,
             light_dir: self.camera.light_dir,
             bg_color: self.camera.background,
@@ -305,12 +312,13 @@ impl SimulationBuilder {
         let mut rng = rand::rngs::StdRng::seed_from_u64(params.seed);
 
         let mut positions: Vec<Vec3> = Vec::with_capacity(params.particle_number);
-        let min_dist = 2.0 * params.radius_eq * 1.1; // 10% clearance
+        let clearance = 1.1;
+        let min_dist = 2.0 * params.radius_eq * clearance / params.rve_side_len;
         let mut attempts = 0;
         while positions.len() < params.particle_number {
-            let candidate: Vec3 = rng.sample(Bounded(params.rve_side_len));
+            let candidate: Vec3 = rng.sample(Bounded(1.0));
             let overlap = positions.iter().any(|p| {
-                let r = (candidate - *p) % params.rve_side_len;
+                let r = (candidate - *p) % 1.0;
                 r.norm() < min_dist
             });
             if !overlap {
