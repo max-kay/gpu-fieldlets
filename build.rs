@@ -19,7 +19,7 @@ fn main() {
             "macosx",
             "metal",
             "-c",
-            "-O3",
+            "-O0",
             "-ffast-math",
             "-flto",
             "src/lib.metal",

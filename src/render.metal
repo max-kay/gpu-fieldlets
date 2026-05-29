@@ -162,5 +162,6 @@ kernel void render_kernel(device uint *output [[buffer(0)]],
   uint b = (uint)(saturate(final_color.b) * 255.0f);
   uint a = 255;
 
-  output[gid.y * frame.dims.x + gid.x] = (a << 24) | (r << 16) | (g << 8) | b;
+  output[gid.y * frame.dims.x + gid.x] =
+      (a << 24) | (b << 16) | (g << 8) | (r << 0);
 }

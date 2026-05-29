@@ -3,7 +3,7 @@ use std::f32::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
-use crate::gpu::FrameSpec;
+use crate::gpu::{FrameSpec, GPUParams, Stage};
 
 use super::{
     Simulation, Vec3,
@@ -102,11 +102,11 @@ pub struct SimulationBuilder {
     pub camera: CameraBuilder,
 }
 
+const DEFAULT_MAG_MOMENT_DENSITY: f32 = 380.0 * KILO;
 impl Default for SimulationBuilder {
     fn default() -> Self {
         use ValueOrFn::Value;
         let big_saxis: f32 = 2.5 * MICRO;
-        let mag_moment_density: f32 = 380.0 * KILO;
 
         Self {
             fill_fraction: 0.01,
@@ -118,12 +118,12 @@ impl Default for SimulationBuilder {
             epsilon_mat: 2.0,
             epsilon_part: 10.0,
             h_field_dir: Value(Vec3::new(0.0, 0.0, 1.0)),
-            h_field_norm: Value(5.0 * mag_moment_density),
+            h_field_norm: Value(5.0 * DEFAULT_MAG_MOMENT_DENSITY),
             e_field_norm: Value(100.0 * MEGA),
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
             repulsion_factor: 40.0,
             duration: 3.0,
-            velocity_factor: 0.5,
+            velocity_factor: 0.3,
             log_frames: 50,
             seed: None,
             name: String::new(),
@@ -184,6 +184,24 @@ impl SimulationParameters {
         self.h_field_norm.get(time) * self.h_field_dir.get(time)
     }
 
+    pub fn gpu_params(&self, time: f32) -> GPUParams {
+        GPUParams {
+            particle_number: self.particle_number as u32,
+            rve_side_len: self.rve_side_len,
+            epsilon_mat: self.epsilon_mat,
+            mag_dipole: self.mag_dipole,
+            particle_vol: self.particle_vol,
+            e_sus_x: self.e_sus_x,
+            e_sus_z: self.e_sus_z,
+            radius_eq: self.radius_eq,
+            repulsion_factor: self.repulsion_factor,
+            t_drag: self.t_drag(time),
+            r_drag: self.r_drag(time),
+            ext_e_field: self.ext_e_field(time),
+            ext_h_field: self.ext_h_field(time),
+        }
+    }
+
     pub fn to_json(&self, path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
         let file = File::create(path)?;
         serde_json::ser::to_writer_pretty(file, &self)?;
@@ -193,11 +211,12 @@ impl SimulationParameters {
     pub fn frame_spec(&self, time: f32) -> FrameSpec {
         let root = self.rve_side_len * self.camera.root.get(time);
         let dist = root.norm();
-        let scale =
-            self.rve_side_len / (self.camera.dims[0].min(self.camera.dims[1]) as f32) / dist;
+        let scale = self.rve_side_len * f32::sqrt(3.0) * 1.2
+            / (self.camera.dims[0].min(self.camera.dims[1]) as f32)
+            / dist;
         let dir = -root.normalised();
-        let u_s2 = dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
-        let u_s1 = u_s2.cross(dir).normalised();
+        let u_s2 = -dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
+        let u_s1 = dir.cross(u_s2).normalised();
         FrameSpec {
             dims: self.camera.dims,
             particle_number: self.particle_number as u32,
@@ -304,9 +323,9 @@ impl SimulationBuilder {
             .collect();
         let metal = crate::gpu::MetalState::new(&params, &positions, &directions);
 
-        let this = Simulation { params, metal };
-        this.update_el_dipoles();
-        this
+        let gpu_params = params.gpu_params(0.0);
+        metal.run_stage(Stage::ElDipoles, &gpu_params);
+        Simulation { params, metal }
     }
 }
 
@@ -325,8 +344,8 @@ impl Default for CameraBuilder {
     fn default() -> Self {
         use ValueOrFn::Value;
         Self {
-            dims: [1000, 600],
-            root: Value(Vec3::new(0.8, 0.2, 1.2)),
+            dims: [1000, 800],
+            root: Value(3.0 * Vec3::new(1.0, 0.0, 0.0)),
             oversamples: 3,
             background: Vec3::new(1.0, 1.0, 1.0),
             particle_color: Vec3::new(0.3, 0.12, 0.8),

@@ -16,8 +16,8 @@ struct GPUParams {
   float repulsion_factor;
   float t_drag;
   float r_drag;
-  float4 ext_e_field;
   float4 ext_h_field;
+  float4 ext_e_field;
 };
 
 float3 mod_rve(float3 r, float side_len) {

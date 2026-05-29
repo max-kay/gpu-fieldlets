@@ -34,30 +34,7 @@ pub struct Simulation {
     metal: MetalState,
 }
 
-impl Simulation {
-    fn gpu_params(&self, time: f32) -> GPUParams {
-        GPUParams {
-            particle_number: self.params.particle_number as u32,
-            rve_side_len: self.params.rve_side_len,
-            epsilon_mat: self.params.epsilon_mat,
-            mag_dipole: self.params.mag_dipole,
-            particle_vol: self.params.particle_vol,
-            e_sus_x: self.params.e_sus_x,
-            e_sus_z: self.params.e_sus_z,
-            radius_eq: self.params.radius_eq,
-            repulsion_factor: self.params.repulsion_factor,
-            t_drag: self.params.t_drag(time),
-            r_drag: self.params.r_drag(time),
-            ext_e_field: self.params.ext_e_field(time),
-            ext_h_field: self.params.ext_h_field(time),
-        }
-    }
-
-    pub fn update_el_dipoles(&self) {
-        let params = self.gpu_params(0.0);
-        self.metal.run_stage(Stage::ElDipoles, &params);
-    }
-}
+impl Simulation {}
 
 impl Simulation {
     fn new() -> SimulationBuilder {
@@ -105,8 +82,11 @@ impl Simulation {
             if current_time
                 >= (log_step as f32 / self.params.log_frames as f32) * self.params.duration
             {
-                self.metal
-                    .run_plotting(&self.params.frame_spec(current_time));
+                self.metal.run_plotting(
+                    &format!("{log_step:0>5}"),
+                    &log_dir,
+                    &self.params.frame_spec(current_time),
+                );
                 if let Err(err) = self.metal.log_state(
                     &format!("./{log_step:0>5}"),
                     &log_dir,
@@ -117,11 +97,13 @@ impl Simulation {
                 log_step += 1;
             }
 
-            let params = self.gpu_params(current_time);
+            let params = self.params.gpu_params(current_time);
 
-            for _ in 0..5 {
+            for _ in 0..2 {
                 self.metal.run_stage(Stage::EField, &params);
+                self.metal.run_stage(Stage::HField, &params);
                 self.metal.run_stage(Stage::ElDipoles, &params);
+                self.metal.run_stage(Stage::HField, &params);
             }
             self.metal.run_stage(Stage::HField, &params);
             self.metal.run_stage(Stage::PVels, &params);
@@ -132,7 +114,7 @@ impl Simulation {
                 break false;
             }
 
-            let delta_t = self.params.radius_eq * self.params.velocity_factor / max_vel;
+            let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
 
             self.metal
                 .run_stage(Stage::UpdatePositions(delta_t), &params);
@@ -176,9 +158,11 @@ fn main() {
     use params::ValueOrFn::{Fn, Value};
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
-        b.duration = 0.1;
+        b.duration = 0.2;
         b.particle_number = 200;
         b.h_field_norm = Value(0.0);
+        // b.e_field_norm = Value(0.0);
+        b.log_frames = 300;
         b.build()
     }];
     let len = simulations.len();
@@ -196,8 +180,17 @@ fn main() {
         );
         println!("log dir: `{}`", summary.log_dir);
         println!();
-        if Command::new("circle-animate")
-            .args(&[&summary.log_dir, "new.mp4"])
+        if Command::new("ffmpeg")
+            .args(&["-loglevel", "error"])
+            .arg("-hide_banner")
+            .args(&["-framerate", "24"])
+            .arg("-i")
+            .arg(format!("{}/frame_%05d.png", summary.log_dir))
+            .args(&["-c:v", "libx264"])
+            .args(&["-pix_fmt", "yuv420p"])
+            .args(&["-g", "12"])
+            .arg(format!("{}_{}.mp4", summary.log_dir, s.params.name))
+            // ffmpeg -loglevel error -hide_banner -framerate 24 -i frame_%05d.png -c:v libx264 -pix_fmt yuv420p -g 12 output.mp4
             .output()
             .is_ok()
         {

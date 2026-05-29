@@ -1,6 +1,7 @@
 use std::ptr::NonNull;
 
 use dispatch2::DispatchData;
+use image::{ImageBuffer, Rgba};
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
@@ -27,8 +28,8 @@ pub struct GPUParams {
     pub repulsion_factor: f32,
     pub t_drag: f32,
     pub r_drag: f32,
-    pub ext_e_field: Vec3,
     pub ext_h_field: Vec3,
+    pub ext_e_field: Vec3,
 }
 
 #[repr(C)]
@@ -323,7 +324,7 @@ impl MetalState {
         (output[0], output[1] > 0.5)
     }
 
-    pub fn run_plotting(&self, spec: &FrameSpec) {
+    pub fn run_plotting(&self, name: &str, dir: &str, spec: &FrameSpec) {
         let command_buffer = self.queue.commandBuffer().unwrap();
         let encoder = command_buffer.computeCommandEncoder().unwrap();
         encoder.setComputePipelineState(&self.pipeline_render);
@@ -334,25 +335,38 @@ impl MetalState {
             encoder.setBuffer_offset_atIndex(Some(&*self.buf_directions), 0, 2);
             encoder.setBytes_length_atIndex(
                 NonNull::new(spec as *const _ as *mut _).unwrap(),
-                std::mem::size_of::<GPUParams>(),
+                std::mem::size_of::<FrameSpec>(),
                 3,
             );
         }
 
-        let grid_size = MTLSize {
+        let threads_per_grid = MTLSize {
+            width: spec.dims[0] as _,
+            height: spec.dims[1] as _,
+            depth: 1,
+        };
+        let threads_per_threadgroup = MTLSize {
             width: 16,
             height: 16,
             depth: 1,
         };
-        let thread_group_size = MTLSize {
-            width: (spec.dims[0] as usize + grid_size.width - 1) / grid_size.width,
-            height: (spec.dims[1] as usize + grid_size.height - 1) / grid_size.height,
-            depth: 1,
-        };
-        encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
+        encoder.dispatchThreads_threadsPerThreadgroup(threads_per_grid, threads_per_threadgroup);
         encoder.endEncoding();
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
+        let buffer = unsafe {
+            std::slice::from_raw_parts(
+                self.buf_img.contents().as_ptr() as *const u8,
+                (spec.dims[0] * spec.dims[1]) as usize * size_of::<u32>(),
+            )
+        };
+        let img_buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(spec.dims[0], spec.dims[1], buffer)
+            .expect("Buffer size does not match the specified width and height");
+
+        // TODO: Error handling
+        img_buffer
+            .save(&format!("{}/frame_{}.png", dir, name))
+            .unwrap();
     }
 
     pub fn log_state(&self, name: &str, dir: &str, particle_number: usize) -> std::io::Result<()> {
