@@ -1,3 +1,4 @@
+use std::mem;
 use std::ptr::NonNull;
 
 use dispatch2::DispatchData;
@@ -126,7 +127,7 @@ impl MetalState {
                 device
                     .newBufferWithBytes_length_options(
                         NonNull::new(positions.as_ptr() as *mut _).unwrap(),
-                        std::mem::size_of_val(positions),
+                        mem::size_of_val(positions),
                         MTLResourceOptions::StorageModeShared,
                     )
                     .unwrap()
@@ -135,48 +136,48 @@ impl MetalState {
                 device
                     .newBufferWithBytes_length_options(
                         NonNull::new(directions.as_ptr() as *mut _).unwrap(),
-                        std::mem::size_of_val(directions),
+                        mem::size_of_val(directions),
                         MTLResourceOptions::StorageModeShared,
                     )
                     .unwrap()
             },
             buf_el_dipole_moments: device
                 .newBufferWithLength_options(
-                    size_of::<Vec3>() * params.particle_number,
-                    MTLResourceOptions::StorageModePrivate,
+                    mem::size_of::<Vec3>() * params.particle_number,
+                    MTLResourceOptions::StorageModeShared,
                 )
                 .unwrap(),
             buf_e_field: unsafe {
                 device
                     .newBufferWithBytes_length_options(
                         NonNull::new(ext_e.as_ptr() as *mut _).unwrap(),
-                        std::mem::size_of_val(&*ext_e),
-                        MTLResourceOptions::StorageModePrivate,
+                        mem::size_of_val(&*ext_e),
+                        MTLResourceOptions::StorageModeShared,
                     )
                     .unwrap()
             },
             buf_h_field: device
                 .newBufferWithLength_options(
-                    size_of::<Vec3>() * params.particle_number,
+                    mem::size_of::<Vec3>() * params.particle_number,
                     MTLResourceOptions::StorageModePrivate,
                 )
                 .unwrap(),
             buf_pos_vel: device
                 .newBufferWithLength_options(
-                    size_of::<Vec3>() * params.particle_number,
+                    mem::size_of::<Vec3>() * params.particle_number,
                     MTLResourceOptions::StorageModePrivate,
                 )
                 .unwrap(),
             buf_check_output: device
                 .newBufferWithLength_options(
-                    2 * size_of::<f32>(),
+                    2 * mem::size_of::<f32>(),
                     MTLResourceOptions::StorageModeShared,
                 )
                 .unwrap(),
 
             buf_img: device
                 .newBufferWithLength_options(
-                    size_of::<u32>()
+                    mem::size_of::<u32>()
                         * (params.camera.dims[0] * params.camera.dims[1]) as NSUInteger,
                     MTLResourceOptions::StorageModeShared,
                 )
@@ -185,67 +186,65 @@ impl MetalState {
     }
 
     pub fn run_stage(&self, stage: Stage, params: &GPUParams) {
+        let (pipeline, buffers, delta_t) = match stage {
+            Stage::EField => (
+                &*self.pipeline_e_field,
+                vec![
+                    &*self.buf_positions,
+                    &*self.buf_el_dipole_moments,
+                    &*self.buf_e_field,
+                ],
+                None,
+            ),
+            Stage::HField => (
+                &*self.pipeline_h_field,
+                vec![
+                    &*self.buf_positions,
+                    &*self.buf_directions,
+                    &*self.buf_h_field,
+                ],
+                None,
+            ),
+            Stage::ElDipoles => (
+                &*self.pipeline_el_dipoles,
+                vec![
+                    &*self.buf_e_field,
+                    &*self.buf_directions,
+                    &*self.buf_el_dipole_moments,
+                ],
+                None,
+            ),
+            Stage::PVels => (
+                &*self.pipeline_p_vels,
+                vec![
+                    &*self.buf_positions,
+                    &*self.buf_directions,
+                    &*self.buf_el_dipole_moments,
+                    &*self.buf_pos_vel,
+                ],
+                None,
+            ),
+            Stage::UpdatePositions(dt) => (
+                &*self.pipeline_positions,
+                vec![&*self.buf_positions, &*self.buf_pos_vel],
+                Some(dt),
+            ),
+            Stage::UpdateDirections(dt) => (
+                &*self.pipeline_directions,
+                vec![
+                    &*self.buf_directions,
+                    &*self.buf_h_field,
+                    &*self.buf_e_field,
+                ],
+                Some(dt),
+            ),
+        };
         let command_buffer = self.queue.commandBuffer().unwrap();
         let encoder = command_buffer.computeCommandEncoder().unwrap();
 
-        let particle_number = params.particle_number as usize;
+        encoder.setComputePipelineState(pipeline);
 
         unsafe {
-            let (pipeline, buffers, delta_t) = match stage {
-                Stage::EField => (
-                    &*self.pipeline_e_field,
-                    vec![
-                        &*self.buf_positions,
-                        &*self.buf_el_dipole_moments,
-                        &*self.buf_e_field,
-                    ],
-                    None,
-                ),
-                Stage::HField => (
-                    &*self.pipeline_h_field,
-                    vec![
-                        &*self.buf_positions,
-                        &*self.buf_directions,
-                        &*self.buf_h_field,
-                    ],
-                    None,
-                ),
-                Stage::ElDipoles => (
-                    &*self.pipeline_el_dipoles,
-                    vec![
-                        &*self.buf_e_field,
-                        &*self.buf_directions,
-                        &*self.buf_el_dipole_moments,
-                    ],
-                    None,
-                ),
-                Stage::PVels => (
-                    &*self.pipeline_p_vels,
-                    vec![
-                        &*self.buf_positions,
-                        &*self.buf_directions,
-                        &*self.buf_el_dipole_moments,
-                        &*self.buf_pos_vel,
-                    ],
-                    None,
-                ),
-                Stage::UpdatePositions(dt) => (
-                    &*self.pipeline_positions,
-                    vec![&*self.buf_positions, &*self.buf_pos_vel],
-                    Some(dt),
-                ),
-                Stage::UpdateDirections(dt) => (
-                    &*self.pipeline_directions,
-                    vec![
-                        &*self.buf_directions,
-                        &*self.buf_h_field,
-                        &*self.buf_e_field,
-                    ],
-                    Some(dt),
-                ),
-            };
-
-            encoder.setComputePipelineState(pipeline);
             for (i, buf) in buffers.iter().enumerate() {
                 encoder.setBuffer_offset_atIndex(Some(*buf), 0, i as _);
             }
@@ -254,7 +253,7 @@ impl MetalState {
             if let Some(dt) = delta_t {
                 encoder.setBytes_length_atIndex(
                     NonNull::new(&dt as *const f32 as *mut _).unwrap(),
-                    4,
+                    mem::size_of::<f32>(),
                     next_index as _,
                 );
                 next_index += 1;
@@ -262,25 +261,24 @@ impl MetalState {
 
             encoder.setBytes_length_atIndex(
                 NonNull::new(params as *const _ as *mut _).unwrap(),
-                std::mem::size_of::<GPUParams>(),
+                mem::size_of::<GPUParams>(),
                 next_index as _,
             );
-
-            let grid_size = MTLSize {
-                width: particle_number,
-                height: 1,
-                depth: 1,
-            };
-            let thread_group_size = MTLSize {
-                width: pipeline
-                    .maxTotalThreadsPerThreadgroup()
-                    .min(particle_number),
-                height: 1,
-                depth: 1,
-            };
-            encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
         }
 
+        let grid_size = MTLSize {
+            width: params.particle_number as usize,
+            height: 1,
+            depth: 1,
+        };
+        let thread_group_size = MTLSize {
+            width: pipeline
+                .maxTotalThreadsPerThreadgroup()
+                .min(params.particle_number as usize),
+            height: 1,
+            depth: 1,
+        };
+        encoder.dispatchThreads_threadsPerThreadgroup(grid_size, thread_group_size);
         encoder.endEncoding();
         command_buffer.commit();
         command_buffer.waitUntilCompleted();
@@ -306,7 +304,7 @@ impl MetalState {
             }
             encoder.setBytes_length_atIndex(
                 NonNull::new(params as *const _ as *mut _).unwrap(),
-                std::mem::size_of::<GPUParams>(),
+                mem::size_of::<GPUParams>(),
                 buffers.len() as _,
             );
         }
@@ -343,7 +341,7 @@ impl MetalState {
             encoder.setBuffer_offset_atIndex(Some(&*self.buf_directions), 0, 2);
             encoder.setBytes_length_atIndex(
                 NonNull::new(spec as *const _ as *mut _).unwrap(),
-                std::mem::size_of::<FrameSpec>(),
+                mem::size_of::<FrameSpec>(),
                 3,
             );
         }
@@ -365,7 +363,7 @@ impl MetalState {
         let buffer = unsafe {
             std::slice::from_raw_parts(
                 self.buf_img.contents().as_ptr() as *const u8,
-                (spec.dims[0] * spec.dims[1]) as usize * size_of::<u32>(),
+                (spec.dims[0] * spec.dims[1]) as usize * mem::size_of::<u32>(),
             )
         };
         let img_buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(spec.dims[0], spec.dims[1], buffer)
