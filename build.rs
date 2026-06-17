@@ -13,6 +13,7 @@ fn main() {
     let metallib = out_dir.join("shaders.metallib");
 
     // Compile lib.metal with optimizations
+    // FIXME: this is where lib.metal is compiled
     let status = Command::new("xcrun")
         .args(&[
             "-sdk",

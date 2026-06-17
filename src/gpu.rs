@@ -282,6 +282,7 @@ impl MetalState {
         }
     }
 
+    // FIXME: this is the cpu implementation
     pub fn update_velocity(&self, params: &GPUParams) {
         unsafe {
             let poss = std::slice::from_raw_parts(
@@ -314,6 +315,7 @@ impl MetalState {
                             *dirs.get_unchecked(j),
                         );
 
+                    // FIXME: the following lines:
                     let f_e = params.e_force_prefactor / dist.powi(4)
                         * force_bracket_term(
                             r_ji_hat,
@@ -421,6 +423,7 @@ impl MetalState {
                 None,
             ),
             Stage::Velocity => (
+                // FIXME: this is where the GPU params are set
                 &*self.pipeline_velocity,
                 vec![
                     &*self.buf_position,

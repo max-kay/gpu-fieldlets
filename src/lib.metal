@@ -25,7 +25,10 @@ struct GPUParams {
   float r_drag;
 };
 
-float3 mod_rve(float3 r) { return r - round(r); }
+float pow3(float val) { return val * val * val; }
+float pow4(float val) { return val * val * val * val; }
+
+float3 mod_one(float3 r) { return r - round(r); }
 
 kernel void update_e_dipole(device const float4 *e_field [[buffer(0)]],
                             device const float4 *direction [[buffer(1)]],
@@ -63,11 +66,11 @@ kernel void update_e_field(device const float4 *position [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - position[j].xyz);
+    float3 r_ji = mod_one(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
-    e_field_i += params.e_field_prefactor / pow(dist, 3) *
+    e_field_i += params.e_field_prefactor / pow3(dist) *
                  field_bracket_term(r_ji_hat, e_dipole[j].xyz);
   }
   e_field[i] = float4(e_field_i, 0.0);
@@ -88,11 +91,11 @@ kernel void update_h_field(device const float4 *position [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - position[j].xyz);
+    float3 r_ji = mod_one(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
-    h_field_i += params.h_field_prefactor / pow(dist, 3) *
+    h_field_i += params.h_field_prefactor / pow3(dist) *
                  field_bracket_term(r_ji_hat, direction[j].xyz);
   }
   h_field[i] = float4(h_field_i, 0.0);
@@ -105,6 +108,7 @@ float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
   return f1 + f2;
 }
 
+// FIXME: this is where the GPU implementation
 kernel void update_velocity(device const float4 *position [[buffer(0)]],
                             device const float4 *direction [[buffer(1)]],
                             device const float4 *e_dipole [[buffer(2)]],
@@ -123,16 +127,16 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - position[j].xyz);
+    float3 r_ji = mod_one(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
-    float3 f_h = params.h_force_prefactor / pow(dist, 4) *
+    float3 f_h = params.h_force_prefactor / pow4(dist) *
                  force_bracket_term(r_ji_hat, dir_i, direction[j].xyz);
 
     // electric
-    float3 f_e = params.e_force_prefactor / pow(dist, 4) *
+    float3 f_e = params.e_force_prefactor / pow4(dist) *
                  force_bracket_term(r_ji_hat, dipole_i, e_dipole[j].xyz);
 
     // repulsive
@@ -157,7 +161,7 @@ kernel void update_position(device float4 *position [[buffer(0)]],
 
   float3 new_pos =
       position[i].xyz + pos_vel[i].xyz * delta_t / params.rve_side_len;
-  position[i] = float4(mod_rve(new_pos), 0.0);
+  position[i] = float4(mod_one(new_pos), 0.0);
 }
 
 kernel void update_direction(device float4 *direction [[buffer(0)]],

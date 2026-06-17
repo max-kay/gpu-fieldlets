@@ -59,52 +59,27 @@ impl Simulation {
 
     fn run_step(&mut self, params: &GPUParams) -> f32 {
         for _ in 0..3 {
-            if true {
-                self.metal.run_stage(Stage::EField, &params);
-            } else {
-                self.metal.update_e_field(&params);
-            }
-            if true {
-                self.metal.run_stage(Stage::EDipole, &params);
-            } else {
-                self.metal.update_e_dipole(&params);
-            }
+            self.metal.run_stage(Stage::EField, &params);
+            self.metal.run_stage(Stage::EDipole, &params);
         }
-        if true {
-            self.metal.run_stage(Stage::HField, &params);
-        } else {
-            self.metal.update_h_field(&params);
-        }
+        self.metal.run_stage(Stage::HField, &params);
 
-        // FIXME: this is the function
-        if false {
+        // FIXME: this is the call site
+        if true {
             self.metal.run_stage(Stage::Velocity, &params);
         } else {
             self.metal.update_velocity(&params);
         }
 
-        let max_vel = if true {
-            let (max_vel, finite) = self.metal.run_max_and_check(&params);
-            if !finite {
-                panic!("encountered invalid buffers")
-            }
-            max_vel
-        } else {
-            self.metal.find_max_velocity(params)
-        };
+        let (max_vel, finite) = self.metal.run_max_and_check(&params);
+        if !finite {
+            panic!("encountered invalid buffers")
+        }
 
         let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
 
-        if true {
-            self.metal.run_stage(Stage::Position(delta_t), &params);
-        } else {
-            self.metal.update_position(&params, delta_t);
-        }
-        if true {
-            self.metal.run_stage(Stage::Direction(delta_t), &params);
-        } else {
-            self.metal.update_direction(&params, delta_t);
-        }
+        self.metal.run_stage(Stage::Position(delta_t), &params);
+        self.metal.run_stage(Stage::Direction(delta_t), &params);
 
         delta_t
     }
@@ -195,7 +170,7 @@ fn main() {
 
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
-        b.duration = 0.2;
+        b.duration = 0.08;
         b.particle_number = 100;
         b.h_field_norm = Value(0.0);
         // b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
