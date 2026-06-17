@@ -27,12 +27,29 @@ struct GPUParams {
 
 float3 mod_rve(float3 r) { return r - round(r); }
 
+kernel void update_e_dipole(device const float4 *e_field [[buffer(0)]],
+                            device const float4 *direction [[buffer(1)]],
+                            device float4 *e_dipole [[buffer(2)]],
+                            constant GPUParams &params [[buffer(3)]],
+                            uint i [[thread_position_in_grid]]) {
+  if (i >= params.particle_number)
+    return;
+
+  float3 e_i = e_field[i].xyz;
+  float3 d_i = direction[i].xyz;
+
+  float3 el_dipole = params.left_dipole_prefactor * e_i +
+                     params.right_dipole_prefactor * dot(d_i, e_i) * d_i;
+
+  e_dipole[i] = float4(el_dipole, 0.0);
+}
+
 float3 field_bracket_term(float3 rji, float3 dj) {
   return 3.0 * dot(dj, rji) * rji - dj;
 }
 
-kernel void update_e_field(device const float4 *positions [[buffer(0)]],
-                           device const float4 *el_dipole_moments [[buffer(1)]],
+kernel void update_e_field(device const float4 *position [[buffer(0)]],
+                           device const float4 *e_dipole [[buffer(1)]],
                            device float4 *e_field [[buffer(2)]],
                            constant GPUParams &params [[buffer(3)]],
                            uint i [[thread_position_in_grid]]) {
@@ -40,24 +57,24 @@ kernel void update_e_field(device const float4 *positions [[buffer(0)]],
     return;
 
   float3 e_field_i = params.ext_e_field.xyz;
-  float3 pos_i = positions[i].xyz;
+  float3 pos_i = position[i].xyz;
 
   for (uint j = 0; j < params.particle_number; j++) {
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
+    float3 r_ji = mod_rve(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
     e_field_i += params.e_field_prefactor / pow(dist, 3) *
-                 field_bracket_term(r_ji_hat, el_dipole_moments[j].xyz);
+                 field_bracket_term(r_ji_hat, e_dipole[j].xyz);
   }
   e_field[i] = float4(e_field_i, 0.0);
 }
 
-kernel void update_h_field(device const float4 *positions [[buffer(0)]],
-                           device const float4 *directions [[buffer(1)]],
+kernel void update_h_field(device const float4 *position [[buffer(0)]],
+                           device const float4 *direction [[buffer(1)]],
                            device float4 *h_field [[buffer(2)]],
                            constant GPUParams &params [[buffer(3)]],
                            uint i [[thread_position_in_grid]]) {
@@ -65,37 +82,20 @@ kernel void update_h_field(device const float4 *positions [[buffer(0)]],
     return;
 
   float3 h_field_i = params.ext_h_field.xyz;
-  float3 pos_i = positions[i].xyz;
+  float3 pos_i = position[i].xyz;
 
   for (uint j = 0; j < params.particle_number; j++) {
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
+    float3 r_ji = mod_rve(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
     h_field_i += params.h_field_prefactor / pow(dist, 3) *
-                 field_bracket_term(r_ji_hat, directions[j].xyz);
+                 field_bracket_term(r_ji_hat, direction[j].xyz);
   }
   h_field[i] = float4(h_field_i, 0.0);
-}
-
-kernel void update_el_dipoles(device const float4 *e_field [[buffer(0)]],
-                              device const float4 *directions [[buffer(1)]],
-                              device float4 *el_dipole_moments [[buffer(2)]],
-                              constant GPUParams &params [[buffer(3)]],
-                              uint i [[thread_position_in_grid]]) {
-  if (i >= params.particle_number)
-    return;
-
-  float3 e_i = e_field[i].xyz;
-  float3 d_i = directions[i].xyz;
-
-  float3 el_dipole = params.left_dipole_prefactor * e_i +
-                     params.right_dipole_prefactor * dot(d_i, e_i) * d_i;
-
-  el_dipole_moments[i] = float4(el_dipole, 0.0);
 }
 
 float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
@@ -105,36 +105,35 @@ float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
   return f1 + f2;
 }
 
-kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
-                          device const float4 *directions [[buffer(1)]],
-                          device const float4 *el_dipole_moments [[buffer(2)]],
-                          device float4 *pos_vel [[buffer(3)]],
-                          constant GPUParams &params [[buffer(4)]],
-                          uint i [[thread_position_in_grid]]) {
+kernel void update_velocity(device const float4 *position [[buffer(0)]],
+                            device const float4 *direction [[buffer(1)]],
+                            device const float4 *e_dipole [[buffer(2)]],
+                            device float4 *velocity [[buffer(3)]],
+                            constant GPUParams &params [[buffer(4)]],
+                            uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
 
-  float3 pos_i = positions[i].xyz;
-  float3 dir_i = directions[i].xyz;
-  float3 dipole_i = el_dipole_moments[i].xyz;
-  float3 total_f = float3(0.0);
+  float3 pos_i = position[i].xyz;
+  float3 dir_i = direction[i].xyz;
+  float3 dipole_i = e_dipole[i].xyz;
+  float3 total_vel = float3(0.0);
 
   for (uint j = 0; j < params.particle_number; j++) {
     if (i == j)
       continue;
 
-    float3 r_ji = mod_rve(pos_i - positions[j].xyz);
+    float3 r_ji = mod_rve(pos_i - position[j].xyz);
     float dist = length(r_ji);
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
     float3 f_h = params.h_force_prefactor / pow(dist, 4) *
-                 force_bracket_term(r_ji_hat, dir_i, directions[j].xyz);
+                 force_bracket_term(r_ji_hat, dir_i, direction[j].xyz);
 
     // electric
-    float3 f_e =
-        params.e_force_prefactor / pow(dist, 4) *
-        force_bracket_term(r_ji_hat, dipole_i, el_dipole_moments[j].xyz);
+    float3 f_e = params.e_force_prefactor / pow(dist, 4) *
+                 force_bracket_term(r_ji_hat, dipole_i, e_dipole[j].xyz);
 
     // repulsive
     float exponent =
@@ -142,37 +141,37 @@ kernel void update_p_vels(device const float4 *positions [[buffer(0)]],
         (dist * params.rve_side_len / (2.0 * params.radius_eq) - 1.0);
     float3 f_r = params.r_force_prefactor * (exp(exponent) * r_ji_hat);
 
-    total_f += f_h + f_e + f_r;
+    total_vel += (f_h + f_e + f_r) / params.t_drag;
   }
 
-  pos_vel[i] = float4(total_f / params.t_drag, 0.0);
+  velocity[i] = float4(total_vel, 0.0);
 }
 
-kernel void update_positions(device float4 *positions [[buffer(0)]],
-                             device const float4 *pos_vel [[buffer(1)]],
-                             constant float &delta_t [[buffer(2)]],
-                             constant GPUParams &params [[buffer(3)]],
-                             uint i [[thread_position_in_grid]]) {
+kernel void update_position(device float4 *position [[buffer(0)]],
+                            device const float4 *pos_vel [[buffer(1)]],
+                            constant float &delta_t [[buffer(2)]],
+                            constant GPUParams &params [[buffer(3)]],
+                            uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
 
   float3 new_pos =
-      positions[i].xyz + pos_vel[i].xyz * delta_t / params.rve_side_len;
-  positions[i] = float4(mod_rve(new_pos), 0.0);
+      position[i].xyz + pos_vel[i].xyz * delta_t / params.rve_side_len;
+  position[i] = float4(mod_rve(new_pos), 0.0);
 }
 
-kernel void update_directions(device float4 *directions [[buffer(0)]],
-                              device const float4 *h_field [[buffer(1)]],
-                              device const float4 *e_field [[buffer(2)]],
-                              constant float &delta_t [[buffer(3)]],
-                              constant GPUParams &params [[buffer(4)]],
-                              uint i [[thread_position_in_grid]]) {
+kernel void update_direction(device float4 *direction [[buffer(0)]],
+                             device const float4 *h_field [[buffer(1)]],
+                             device const float4 *e_field [[buffer(2)]],
+                             constant float &delta_t [[buffer(3)]],
+                             constant GPUParams &params [[buffer(4)]],
+                             uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
 
   float3 h_i = h_field[i].xyz;
   float3 e_i = e_field[i].xyz;
-  float3 d_i = directions[i].xyz;
+  float3 d_i = direction[i].xyz;
 
   float3 magnetic = params.h_torque_prefactor * (h_i - d_i * dot(h_i, d_i));
   float3 electric =
@@ -180,7 +179,7 @@ kernel void update_directions(device float4 *directions [[buffer(0)]],
 
   float3 dir_vel = (magnetic + electric) / params.r_drag;
 
-  directions[i] = float4(normalize(d_i + delta_t * dir_vel), 0.0);
+  direction[i] = float4(normalize(d_i + delta_t * dir_vel), 0.0);
 }
 
 kernel void

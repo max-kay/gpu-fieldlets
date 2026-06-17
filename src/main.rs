@@ -12,6 +12,8 @@ use math::Vec3;
 use params::{SimulationBuilder, SimulationParameters};
 use serde::Serialize;
 
+use crate::gpu::GPUParams;
+
 #[derive(Serialize)]
 struct SimulationSummary {
     iterations_ran: usize,
@@ -55,6 +57,58 @@ impl Simulation {
         }
     }
 
+    fn run_step(&mut self, params: &GPUParams) -> f32 {
+        for _ in 0..3 {
+            if true {
+                self.metal.run_stage(Stage::EField, &params);
+            } else {
+                self.metal.update_e_field(&params);
+            }
+            if true {
+                self.metal.run_stage(Stage::EDipole, &params);
+            } else {
+                self.metal.update_e_dipole(&params);
+            }
+        }
+        if true {
+            self.metal.run_stage(Stage::HField, &params);
+        } else {
+            self.metal.update_h_field(&params);
+        }
+
+        // FIXME: this is the function
+        if false {
+            self.metal.run_stage(Stage::Velocity, &params);
+        } else {
+            self.metal.update_velocity(&params);
+        }
+
+        let max_vel = if true {
+            let (max_vel, finite) = self.metal.run_max_and_check(&params);
+            if !finite {
+                panic!("encountered invalid buffers")
+            }
+            max_vel
+        } else {
+            self.metal.find_max_velocity(params)
+        };
+
+        let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
+
+        if true {
+            self.metal.run_stage(Stage::Position(delta_t), &params);
+        } else {
+            self.metal.update_position(&params, delta_t);
+        }
+        if true {
+            self.metal.run_stage(Stage::Direction(delta_t), &params);
+        } else {
+            self.metal.update_direction(&params, delta_t);
+        }
+
+        delta_t
+    }
+
     fn run(&mut self) -> SimulationSummary {
         let log_dir = Self::make_log_dir();
 
@@ -93,26 +147,7 @@ impl Simulation {
             }
 
             let params = self.params.gpu_params(current_time);
-
-            for _ in 0..3 {
-                self.metal.run_stage(Stage::EField, &params);
-                self.metal.run_stage(Stage::ElDipoles, &params);
-            }
-            self.metal.run_stage(Stage::HField, &params);
-            self.metal.run_stage(Stage::PVels, &params);
-
-            let (max_vel, finite) = self.metal.run_max_and_check(&params);
-
-            if !finite {
-                break false;
-            }
-
-            let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
-
-            self.metal
-                .run_stage(Stage::UpdatePositions(delta_t), &params);
-            self.metal
-                .run_stage(Stage::UpdateDirections(delta_t), &params);
+            let delta_t = self.run_step(&params);
 
             i += 1;
             current_time += delta_t;
@@ -155,13 +190,15 @@ impl Simulation {
 }
 
 fn main() {
+    #[allow(unused)]
     use params::ValueOrFn::{Fn, Value};
+
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
         b.duration = 0.2;
-        b.particle_number = 200;
+        b.particle_number = 100;
         b.h_field_norm = Value(0.0);
-        b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
+        // b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
         // b.e_field_norm = Value(0.0);
         b.log_frames = 300;
         b.build()
@@ -181,6 +218,7 @@ fn main() {
         );
         println!("log dir: `{}`", summary.log_dir);
         println!();
+        let anim_fname = format!("{}_{}.mp4", summary.log_dir, s.params.name);
         if Command::new("ffmpeg")
             .args(&["-loglevel", "error"])
             .arg("-hide_banner")
@@ -190,7 +228,7 @@ fn main() {
             .args(&["-c:v", "libx264"])
             .args(&["-pix_fmt", "yuv420p"])
             .args(&["-g", "12"])
-            .arg(format!("{}_{}.mp4", summary.log_dir, s.params.name))
+            .arg(&anim_fname)
             .output()
             .is_ok()
         {
@@ -198,5 +236,6 @@ fn main() {
         } else {
             println!("failed to create animation")
         };
+        Command::new("open").arg(&anim_fname).output().unwrap();
     }
 }
