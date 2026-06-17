@@ -308,7 +308,7 @@ impl MetalState {
                     let dist = r_ji.norm();
                     let r_ji_hat = r_ji / dist;
 
-                    let f_h = params.h_force_prefactor / dist.powi(4)
+                    let f_h = (params.h_force_prefactor / dist.powi(4))
                         * force_bracket_term(
                             r_ji_hat,
                             *dirs.get_unchecked(i),
@@ -316,7 +316,7 @@ impl MetalState {
                         );
 
                     // FIXME: the following lines:
-                    let f_e = params.e_force_prefactor / dist.powi(4)
+                    let f_e = (params.e_force_prefactor / dist.powi(4))
                         * force_bracket_term(
                             r_ji_hat,
                             *el_dipoles.get_unchecked(i),
@@ -397,6 +397,15 @@ impl MetalState {
 }
 
 impl MetalState {
+    pub fn get_velocity_buf(&self, params: &GPUParams) -> &[Vec3] {
+        unsafe {
+            std::slice::from_raw_parts(
+                self.buf_velocity.contents().as_ptr() as *const Vec3,
+                params.particle_number as usize,
+            )
+        }
+    }
+
     pub fn run_stage(&self, stage: Stage, params: &GPUParams) {
         let (pipeline, buffers, delta_t) = match stage {
             Stage::EField => (

@@ -1,4 +1,4 @@
-use std::{error::Error, fs::File, io::Write, path::Path, process::Command};
+use std::{error::Error, f32::consts::TAU, fs::File, io::Write, path::Path, process::Command};
 
 use chrono::{self, Local};
 
@@ -57,33 +57,6 @@ impl Simulation {
         }
     }
 
-    fn run_step(&mut self, params: &GPUParams) -> f32 {
-        for _ in 0..3 {
-            self.metal.run_stage(Stage::EField, &params);
-            self.metal.run_stage(Stage::EDipole, &params);
-        }
-        self.metal.run_stage(Stage::HField, &params);
-
-        // FIXME: this is the call site
-        if true {
-            self.metal.run_stage(Stage::Velocity, &params);
-        } else {
-            self.metal.update_velocity(&params);
-        }
-
-        let (max_vel, finite) = self.metal.run_max_and_check(&params);
-        if !finite {
-            panic!("encountered invalid buffers")
-        }
-
-        let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
-
-        self.metal.run_stage(Stage::Position(delta_t), &params);
-        self.metal.run_stage(Stage::Direction(delta_t), &params);
-
-        delta_t
-    }
-
     fn run(&mut self) -> SimulationSummary {
         let log_dir = Self::make_log_dir();
 
@@ -122,7 +95,66 @@ impl Simulation {
             }
 
             let params = self.params.gpu_params(current_time);
-            let delta_t = self.run_step(&params);
+            let params: &GPUParams = &params;
+            for _ in 0..3 {
+                self.metal.run_stage(Stage::EField, &params);
+                self.metal.run_stage(Stage::EDipole, &params);
+            }
+            self.metal.run_stage(Stage::HField, &params);
+
+            if ("compare", i == 800).1 {
+                // FIXME: comparison
+                self.metal.run_stage(Stage::Velocity, &params);
+                let gpu_results: Vec<Vec3> = self.metal.get_velocity_buf(&params).into();
+                self.metal.update_velocity(&params);
+                let mut max_err = 0.0;
+                let mut err_sum = 0.0;
+                let mut max_angle = 0.0;
+                let mut angle_sum = 0.0;
+                for (rel_err, angle_err) in gpu_results
+                    .iter()
+                    .zip(self.metal.get_velocity_buf(&params))
+                    .map(|(gpu, cpu)| {
+                        let gpu_norm = gpu.norm();
+                        let cpu_norm = cpu.norm();
+                        (
+                            (gpu_norm - cpu_norm) / cpu_norm,
+                            (gpu.dot(*cpu) / (gpu_norm * cpu_norm)).acos(),
+                        )
+                    })
+                {
+                    err_sum += rel_err;
+                    angle_sum += angle_err;
+                    if max_err < rel_err {
+                        max_err = rel_err
+                    }
+                    if max_angle < angle_err {
+                        max_angle = angle_err
+                    }
+                }
+                println!(
+                    "Relative Magnitude error  max: {}  avg: {}",
+                    max_err,
+                    err_sum / params.particle_number as f32
+                );
+                println!(
+                    "Angle error  max: {} degrees  avg: {} degrees",
+                    max_angle / TAU * 360.0,
+                    angle_sum / params.particle_number as f32 / TAU * 360.0
+                );
+                panic!("reached comparison");
+            } else if ("run metal function", false).1 {
+                self.metal.run_stage(Stage::Velocity, &params);
+            } else {
+                self.metal.update_velocity(&params);
+            }
+            let (max_vel, finite) = self.metal.run_max_and_check(&params);
+            if !finite {
+                break false;
+            }
+            let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
+            self.metal.run_stage(Stage::Position(delta_t), &params);
+            self.metal.run_stage(Stage::Direction(delta_t), &params);
 
             i += 1;
             current_time += delta_t;
@@ -174,7 +206,7 @@ fn main() {
         b.particle_number = 100;
         b.h_field_norm = Value(0.0);
         // b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
-        // b.e_field_norm = Value(0.0);
+        b.e_field_norm = Value(0.0);
         b.log_frames = 300;
         b.build()
     }];
