@@ -12,15 +12,13 @@ use math::Vec3;
 use params::{SimulationBuilder, SimulationParameters};
 use serde::Serialize;
 
-use crate::gpu::GPUParams;
-
 #[derive(Serialize)]
 struct SimulationSummary {
     iterations_ran: usize,
     log_dir: String,
     success: bool,
-    simulation_time: f32,
-    real_time: f32,
+    simulation_time: f64,
+    real_time: f64,
 }
 
 impl SimulationSummary {
@@ -35,8 +33,6 @@ pub struct Simulation {
     params: SimulationParameters,
     metal: MetalState,
 }
-
-impl Simulation {}
 
 impl Simulation {
     fn new() -> SimulationBuilder {
@@ -64,25 +60,25 @@ impl Simulation {
             eprintln!("could not log configuration: {err}")
         }
 
-        let mut current_time = 0.0;
+        let mut current_time: f64 = 0.0;
         let mut i = 0;
         let mut stdout = std::io::stdout();
-        let mut last_delta_t = vec![0.0; 64];
+        let mut last_delta_t: Vec<f64> = vec![0.0; 64];
         let mut log_step = 0;
         let start = std::time::Instant::now();
         let success = loop {
             let _ = write!(
                 stdout.lock(),
                 "{: >8.5} s/{: >6.2} s   ∆t = {: >8.2e} s  i = {: >8}\r",
-                current_time,
+                current_time * self.params.char_time_scale,
                 self.params.duration,
-                last_delta_t.iter().sum::<f32>() / last_delta_t.len() as f32,
+                last_delta_t.iter().sum::<f64>() / last_delta_t.len() as f64,
                 i,
             );
             let _ = stdout.flush();
 
             if current_time
-                >= (log_step as f32 / self.params.log_frames as f32) * self.params.duration
+                >= (log_step as f64 / self.params.log_frames as f64) * self.params.duration
             {
                 if let Err(err) = self.metal.run_plotting(
                     &format!("{log_step:0>5}"),
@@ -95,7 +91,7 @@ impl Simulation {
             }
 
             let params = self.params.gpu_params(current_time);
-            let params: &GPUParams = &params;
+
             for _ in 0..3 {
                 self.metal.run_stage(Stage::EField, &params);
                 self.metal.run_stage(Stage::EDipole, &params);
@@ -103,6 +99,8 @@ impl Simulation {
             self.metal.run_stage(Stage::HField, &params);
 
             if ("compare", i == 800).1 {
+                dbg!(&params);
+                self.metal.find_all_averages(&params);
                 // FIXME: comparison
                 self.metal.run_stage(Stage::Velocity, &params);
                 let gpu_results: Vec<Vec3> = self.metal.get_velocity_buf(&params).into();
@@ -142,7 +140,8 @@ impl Simulation {
                     max_angle / TAU * 360.0,
                     angle_sum / params.particle_number as f32 / TAU * 360.0
                 );
-                panic!("reached comparison");
+                println!();
+                // panic!("reached comparison");
             } else if ("run metal function", false).1 {
                 self.metal.run_stage(Stage::Velocity, &params);
             } else {
@@ -152,14 +151,19 @@ impl Simulation {
             if !finite {
                 break false;
             }
-            let delta_t = (self.params.radius_eq * self.params.velocity_factor / max_vel).min(2e-5);
-            self.metal.run_stage(Stage::Position(delta_t), &params);
-            self.metal.run_stage(Stage::Direction(delta_t), &params);
+            let delta_t = (self.params.radius_eq * self.params.velocity_factor
+                / (max_vel as f64 * self.params.rve_side_len))
+                .min(2e-5);
+
+            self.metal
+                .run_stage(Stage::Position(delta_t as f32), &params);
+            self.metal
+                .run_stage(Stage::Direction(delta_t as f32), &params);
 
             i += 1;
-            current_time += delta_t;
+            current_time += delta_t * self.params.char_time_scale;
             let idx = i % last_delta_t.len();
-            last_delta_t[idx] = delta_t;
+            last_delta_t[idx] = delta_t * self.params.char_time_scale;
             if current_time > self.params.duration {
                 break true;
             }
@@ -180,7 +184,7 @@ impl Simulation {
             eprintln!("could not log: {err}");
         }
 
-        let real_time = start.elapsed().as_secs_f32();
+        let real_time = start.elapsed().as_secs_f64();
         let summary = SimulationSummary {
             iterations_ran: i,
             log_dir: log_dir.clone(),
@@ -204,10 +208,6 @@ fn main() {
         let mut b = Simulation::new();
         b.duration = 0.08;
         b.particle_number = 100;
-        b.h_field_norm = Value(0.0);
-        // b.e_field_dir = Value(Vec3::new(0.0, 0.0, 1.0));
-        b.e_field_norm = Value(0.0);
-        b.log_frames = 300;
         b.build()
     }];
     let len = simulations.len();
@@ -221,7 +221,7 @@ fn main() {
         }
         println!(
             "average ∆t = {:.3e} s",
-            summary.simulation_time / summary.iterations_ran as f32
+            summary.simulation_time / summary.iterations_ran as f64
         );
         println!("log dir: `{}`", summary.log_dir);
         println!();

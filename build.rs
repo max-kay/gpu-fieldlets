@@ -12,8 +12,6 @@ fn main() {
     let render_air = out_dir.join("render.air");
     let metallib = out_dir.join("shaders.metallib");
 
-    // Compile lib.metal with optimizations
-    // FIXME: this is where lib.metal is compiled
     let status = Command::new("xcrun")
         .args(&[
             "-sdk",
@@ -32,7 +30,6 @@ fn main() {
         .expect("Failed to run metal compiler for lib.metal");
     assert!(status.success(), "Failed to compile lib.metal");
 
-    // Compile render.metal with optimizations
     let status = Command::new("xcrun")
         .args(&[
             "-sdk",

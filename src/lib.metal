@@ -8,21 +8,17 @@ struct GPUParams {
   uint particle_number;
   float h_field_prefactor;
   float e_field_prefactor;
-  float left_dipole_prefactor;
-
   float right_dipole_prefactor;
-  float h_force_prefactor;
+
   float e_force_prefactor;
   float r_force_prefactor;
-
   float h_torque_prefactor;
   float e_torque_prefactor;
+
   float rve_side_len;
   float repulsion_factor;
-
   float radius_eq;
-  float t_drag;
-  float r_drag;
+  float _pad;
 };
 
 float pow3(float val) { return val * val * val; }
@@ -41,8 +37,7 @@ kernel void update_e_dipole(device const float4 *e_field [[buffer(0)]],
   float3 e_i = e_field[i].xyz;
   float3 d_i = direction[i].xyz;
 
-  float3 el_dipole = params.left_dipole_prefactor * e_i +
-                     params.right_dipole_prefactor * dot(d_i, e_i) * d_i;
+  float3 el_dipole = e_i + params.right_dipole_prefactor * dot(d_i, e_i) * d_i;
 
   e_dipole[i] = float4(el_dipole, 0.0);
 }
@@ -121,6 +116,7 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
   float3 pos_i = position[i].xyz;
   float3 dir_i = direction[i].xyz;
   float3 dipole_i = e_dipole[i].xyz;
+
   float3 total_vel = float3(0.0);
 
   for (uint j = 0; j < params.particle_number; j++) {
@@ -132,7 +128,7 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
-    float3 f_h = (params.h_force_prefactor / pow4(dist)) *
+    float3 f_h = (1 / pow4(dist)) *
                  force_bracket_term(r_ji_hat, dir_i, direction[j].xyz);
 
     // electric
@@ -146,7 +142,7 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
         (dist * params.rve_side_len / (2.0 * params.radius_eq) - 1.0);
     float3 f_r = params.r_force_prefactor * (exp(exponent) * r_ji_hat);
 
-    total_vel += (f_h + f_e + f_r) / params.t_drag;
+    total_vel += f_h + f_e + f_r;
   }
 
   velocity[i] = float4(total_vel, 0.0);
@@ -160,8 +156,7 @@ kernel void update_position(device float4 *position [[buffer(0)]],
   if (i >= params.particle_number)
     return;
 
-  float3 new_pos =
-      position[i].xyz + pos_vel[i].xyz * delta_t / params.rve_side_len;
+  float3 new_pos = position[i].xyz + pos_vel[i].xyz * delta_t;
   position[i] = float4(mod_one(new_pos), 0.0);
 }
 
@@ -182,7 +177,7 @@ kernel void update_direction(device float4 *direction [[buffer(0)]],
   float3 electric =
       params.e_torque_prefactor * dot(e_i, d_i) * (e_i - d_i * dot(e_i, d_i));
 
-  float3 dir_vel = (magnetic + electric) / params.r_drag;
+  float3 dir_vel = magnetic + electric;
 
   direction[i] = float4(normalize(d_i + delta_t * dir_vel), 0.0);
 }

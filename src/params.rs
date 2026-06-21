@@ -1,5 +1,5 @@
 use rand::prelude::*;
-use std::f32::consts::PI;
+use std::f64::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
@@ -10,22 +10,27 @@ use super::{
     math::{Bounded, UnitVec},
 };
 
-const MEGA: f32 = 1e6;
-const KILO: f32 = 1e3;
-const MICRO: f32 = 1e-6;
+const MEGA: f64 = 1e6;
+const KILO: f64 = 1e3;
+const MICRO: f64 = 1e-6;
 
-const EPSILON_0: f32 = 8.8541878188e-12;
-const MU_0: f32 = 1.25663706127e-6;
+const EPSILON_0: f64 = 8.8541878188e-12;
+const MU_0: f64 = 1.25663706127e-6;
+
+const H_REF: f64 = 17.0 * MEGA;
+const E_REF: f64 = 100.0 * MEGA;
 
 pub trait Invalid {
     const INVALID: Self;
 }
-impl Invalid for f32 {
-    const INVALID: Self = Self::NAN;
-}
 impl Invalid for f64 {
     const INVALID: Self = Self::NAN;
 }
+
+impl Invalid for f32 {
+    const INVALID: Self = Self::NAN;
+}
+
 impl Invalid for Vec3 {
     const INVALID: Self = Vec3 {
         x: f32::NAN,
@@ -38,7 +43,7 @@ impl Invalid for Vec3 {
 #[derive(Clone)]
 pub enum ValueOrFn<T: Invalid> {
     Value(T),
-    Fn(fn(f32) -> T),
+    Fn(fn(f64) -> T),
 }
 impl<T: Invalid + serde::Serialize> serde::Serialize for ValueOrFn<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -59,14 +64,14 @@ impl<T: Invalid> From<T> for ValueOrFn<T> {
     }
 }
 
-impl<T: Invalid> From<fn(f32) -> T> for ValueOrFn<T> {
-    fn from(value: fn(f32) -> T) -> Self {
+impl<T: Invalid> From<fn(f64) -> T> for ValueOrFn<T> {
+    fn from(value: fn(f64) -> T) -> Self {
         Self::Fn(value)
     }
 }
 
 impl<T: Copy + Invalid> ValueOrFn<T> {
-    pub fn get(&self, time: f32) -> T {
+    pub fn get(&self, time: f64) -> T {
         match self {
             ValueOrFn::Value(v) => *v,
             ValueOrFn::Fn(f) => f(time),
@@ -76,27 +81,27 @@ impl<T: Copy + Invalid> ValueOrFn<T> {
 
 #[derive(Clone, serde::Serialize)]
 pub struct SimulationBuilder {
-    pub fill_fraction: f32,
+    pub fill_fraction: f64,
     pub particle_number: usize,
-    pub small_saxis: f32,
-    pub big_saxis: f32,
+    pub small_saxis: f64,
+    pub big_saxis: f64,
 
-    pub mag_moment_density: f32,
+    pub mag_moment_density: f64,
 
-    pub viscosity: ValueOrFn<f32>,
+    pub viscosity: f64,
 
-    pub epsilon_mat: f32,
-    pub epsilon_part: f32,
+    pub epsilon_mat: f64,
+    pub epsilon_part: f64,
 
     pub h_field_dir: ValueOrFn<Vec3>,
-    pub h_field_norm: ValueOrFn<f32>,
+    pub h_field_norm: ValueOrFn<f64>,
     pub e_field_dir: ValueOrFn<Vec3>,
-    pub e_field_norm: ValueOrFn<f32>,
+    pub e_field_norm: ValueOrFn<f64>,
 
-    pub repulsion_factor: f32,
-    pub velocity_factor: f32,
+    pub repulsion_factor: f64,
+    pub velocity_factor: f64,
 
-    pub duration: f32,
+    pub duration: f64,
 
     pub seed: Option<u64>,
 
@@ -105,11 +110,12 @@ pub struct SimulationBuilder {
     pub camera: CameraBuilder,
 }
 
-const DEFAULT_MAG_MOMENT_DENSITY: f32 = 380.0 * KILO;
+const DEFAULT_MAG_MOMENT_DENSITY: f64 = 380.0 * KILO;
+
 impl Default for SimulationBuilder {
     fn default() -> Self {
         use ValueOrFn::Value;
-        let big_saxis: f32 = 2.5 * MICRO;
+        let big_saxis: f64 = 2.5 * MICRO;
 
         Self {
             fill_fraction: 0.01,
@@ -117,7 +123,7 @@ impl Default for SimulationBuilder {
             small_saxis: big_saxis / 3.5,
             big_saxis,
             mag_moment_density: 380.0 * KILO,
-            viscosity: Value(3.5),
+            viscosity: 3.5,
             epsilon_mat: 2.0,
             epsilon_part: 10.0,
             h_field_dir: Value(Vec3::new(0.0, 0.0, 1.0)),
@@ -137,36 +143,38 @@ impl Default for SimulationBuilder {
 
 #[derive(Clone, serde::Serialize)]
 pub struct SimulationParameters {
-    pub fill_fraction: f32,
+    pub fill_fraction: f64,
     pub particle_number: usize,
-    pub small_saxis: f32,
-    pub big_saxis: f32,
+    pub small_saxis: f64,
+    pub big_saxis: f64,
 
-    pub mag_moment_density: f32,
+    pub mag_moment_density: f64,
+    pub char_time_scale: f64,
 
-    viscosity: ValueOrFn<f32>,
+    pub t_drag: f64,
+    pub r_drag: f64,
 
-    pub epsilon_mat: f32,
-    pub epsilon_part: f32,
+    pub epsilon_mat: f64,
+    pub epsilon_part: f64,
 
     h_field_dir: ValueOrFn<Vec3>,
-    h_field_norm: ValueOrFn<f32>,
+    h_field_norm: ValueOrFn<f64>,
     e_field_dir: ValueOrFn<Vec3>,
-    e_field_norm: ValueOrFn<f32>,
+    e_field_norm: ValueOrFn<f64>,
 
-    pub repulsion_factor: f32,
-    pub velocity_factor: f32,
+    pub repulsion_factor: f64,
+    pub velocity_factor: f64,
 
-    pub duration: f32,
+    pub duration: f64,
 
     pub seed: u64,
 
-    pub particle_vol: f32,
-    pub rve_side_len: f32,
-    pub radius_eq: f32,
-    pub e_sus_x: f32,
-    pub e_sus_z: f32,
-    pub mag_dipole: f32,
+    pub particle_vol: f64,
+    pub rve_side_len: f64,
+    pub radius_eq: f64,
+    pub e_sus_x: f64,
+    pub e_sus_z: f64,
+    pub mag_dipole: f64,
 
     pub name: String,
     pub log_frames: u32,
@@ -174,45 +182,52 @@ pub struct SimulationParameters {
 }
 
 impl SimulationParameters {
-    pub fn t_drag(&self, time: f32) -> f32 {
-        6.0 * PI * self.viscosity.get(time) * self.radius_eq
+    pub fn ext_h_field(&self, time: f64) -> Vec3 {
+        (self.h_field_norm.get(time) / H_REF) as f32 * self.h_field_dir.get(time)
     }
-    pub fn r_drag(&self, time: f32) -> f32 {
-        8.0 * PI * self.viscosity.get(time) * self.radius_eq.powi(3)
-    }
-    pub fn ext_e_field(&self, time: f32) -> Vec3 {
-        self.e_field_norm.get(time) * self.e_field_dir.get(time)
-    }
-    pub fn ext_h_field(&self, time: f32) -> Vec3 {
-        self.h_field_norm.get(time) * self.h_field_dir.get(time)
+    pub fn ext_e_field(&self, time: f64) -> Vec3 {
+        (self.e_field_norm.get(time) / E_REF) as f32 * self.e_field_dir.get(time)
     }
 
-    pub fn gpu_params(&self, time: f32) -> GPUParams {
+    pub fn gpu_params(&self, time: f64) -> GPUParams {
+        let factor_1 = 1.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI);
+        let factor_2 = self.char_time_scale / (self.t_drag * self.rve_side_len);
+        let factor_3 = (E_REF * self.particle_vol * EPSILON_0 * self.e_sus_x).powi(2)
+            / self.rve_side_len.powi(4);
+        let e_force_prefactor = (factor_1 * factor_2 * factor_3) as f32;
+
+        let factor_1 =
+            3.0 * MU_0 * self.mag_dipole.powi(2) / (2.0 * PI * (2.0 * self.radius_eq).powi(4));
+        let factor_2 = self.char_time_scale / (self.t_drag * self.rve_side_len);
+        let r_force_prefactor = (factor_1 * factor_2) as f32;
         GPUParams {
             ext_h_field: self.ext_h_field(time),
             ext_e_field: self.ext_e_field(time),
+
             particle_number: self.particle_number as u32,
-            h_field_prefactor: self.mag_dipole / (4.0 * PI) / self.rve_side_len.powi(3),
-            e_field_prefactor: 1.0
-                / (4.0 * PI * EPSILON_0 * self.epsilon_mat)
-                / self.rve_side_len.powi(3),
-            left_dipole_prefactor: self.particle_vol * EPSILON_0 * self.e_sus_x,
-            right_dipole_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
-            h_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
-                / (4.0 * PI)
-                / self.rve_side_len.powi(4),
-            e_force_prefactor: 3.0
-                / (EPSILON_0 * self.epsilon_mat * 2.0 * PI)
-                / self.rve_side_len.powi(4),
-            r_force_prefactor: 3.0 * MU_0 * self.mag_dipole.powi(2)
-                / (2.0 * PI * (2.0 * self.radius_eq).powi(4)),
-            h_torque_prefactor: MU_0 * self.mag_dipole,
-            e_torque_prefactor: self.particle_vol * EPSILON_0 * (self.e_sus_z - self.e_sus_x),
-            rve_side_len: self.rve_side_len,
-            repulsion_factor: self.repulsion_factor,
-            radius_eq: self.radius_eq,
-            t_drag: self.t_drag(time),
-            r_drag: self.r_drag(time),
+            h_field_prefactor: (1.0 / H_REF * self.mag_dipole
+                / (4.0 * PI * self.rve_side_len.powi(3))) as f32,
+            e_field_prefactor: (self.particle_vol * self.e_sus_x
+                / (4.0 * PI * self.epsilon_mat * self.rve_side_len.powi(3)))
+                as f32,
+            right_dipole_prefactor: ((self.e_sus_z - self.e_sus_x) / self.e_sus_x) as f32,
+
+            e_force_prefactor,
+            r_force_prefactor,
+            h_torque_prefactor: (self.char_time_scale / self.r_drag
+                * MU_0
+                * self.mag_dipole
+                * H_REF) as f32,
+            e_torque_prefactor: (self.char_time_scale / self.r_drag
+                * self.particle_vol
+                * EPSILON_0
+                * (self.e_sus_z - self.e_sus_x)
+                * E_REF.powi(2)) as f32,
+
+            rve_side_len: self.rve_side_len as f32,
+            repulsion_factor: self.repulsion_factor as f32,
+            radius_eq: self.radius_eq as f32,
+            _pad: [0.0; _],
         }
     }
 
@@ -222,7 +237,7 @@ impl SimulationParameters {
         Ok(())
     }
 
-    pub fn frame_spec(&self, time: f32) -> FrameSpec {
+    pub fn frame_spec(&self, time: f64) -> FrameSpec {
         let root = self.camera.root.get(time);
         let dist = root.norm();
         let scale =
@@ -239,14 +254,14 @@ impl SimulationParameters {
             cam_s2: u_s2 * scale,
             cam_dir: dir,
             ell_axes: Vec3::new(
-                self.big_saxis / self.rve_side_len,
-                self.big_saxis / self.rve_side_len,
-                self.small_saxis / self.rve_side_len,
+                (self.big_saxis / self.rve_side_len) as f32,
+                (self.big_saxis / self.rve_side_len) as f32,
+                (self.small_saxis / self.rve_side_len) as f32,
             ),
             ell_color: self.camera.particle_color,
             light_dir: self.camera.light_dir,
             bg_color: self.camera.background,
-            ambient_light: self.camera.ambient_light,
+            ambient_light: (self.camera.ambient_light) as f32,
         }
     }
 }
@@ -255,7 +270,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
     fn into(self) -> SimulationParameters {
         let particle_vol = 4.0 / 3.0 * PI * self.big_saxis.powi(2) * self.small_saxis;
         let rve_side_len =
-            (particle_vol * self.particle_number as f32 / self.fill_fraction).powf(1.0 / 3.0);
+            (particle_vol * self.particle_number as f64 / self.fill_fraction).powf(1.0 / 3.0);
         let radius_eq = (self.big_saxis.powi(2) * self.small_saxis).powf(1.0 / 3.0);
         let shape_factor = (self.big_saxis.powi(2) * self.small_saxis)
             / (2.0 * (self.big_saxis.powi(2) - self.small_saxis.powi(2)))
@@ -270,6 +285,7 @@ impl Into<SimulationParameters> for SimulationBuilder {
         let mag_dipole = particle_vol * self.mag_moment_density;
 
         let seed = self.seed.unwrap_or_else(rand::random::<u64>);
+        let t_drag = 6.0 * PI * self.viscosity * radius_eq;
 
         SimulationParameters {
             fill_fraction: self.fill_fraction,
@@ -277,9 +293,11 @@ impl Into<SimulationParameters> for SimulationBuilder {
             small_saxis: self.small_saxis,
             big_saxis: self.big_saxis,
 
+            char_time_scale: 4.0 * PI * t_drag * rve_side_len.powi(5) / (3.0 * MU_0 * mag_dipole),
             mag_moment_density: self.mag_moment_density,
 
-            viscosity: self.viscosity,
+            t_drag,
+            r_drag: 8.0 * PI * self.viscosity * radius_eq.powi(3),
 
             epsilon_mat: self.epsilon_mat,
             epsilon_part: self.epsilon_part,
@@ -321,7 +339,7 @@ impl SimulationBuilder {
             let candidate: Vec3 = rng.sample(Bounded(1.0));
             let overlap = positions.iter().any(|p| {
                 let r = (candidate - *p) % 1.0;
-                r.norm() < min_dist
+                r.norm() < min_dist as f32
             });
             if !overlap {
                 positions.push(candidate);
@@ -355,7 +373,7 @@ pub struct CameraBuilder {
     pub background: Vec3,
     pub particle_color: Vec3,
     pub light_dir: Vec3,
-    pub ambient_light: f32,
+    pub ambient_light: f64,
 }
 
 impl Default for CameraBuilder {
