@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
-use crate::gpu::{FrameSpec, GPUParams, Stage};
+use crate::gpu::{FrameSpec, GpuParams, Stage};
 
 use super::{
     Simulation, Vec3,
@@ -17,7 +17,7 @@ const MICRO: f64 = 1e-6;
 const EPSILON_0: f64 = 8.8541878188e-12;
 const MU_0: f64 = 1.25663706127e-6;
 
-const H_REF: f64 = 17.0 * MEGA;
+const H_REF: f64 = 1.9 * MEGA;
 const E_REF: f64 = 100.0 * MEGA;
 
 pub trait Invalid {
@@ -189,8 +189,13 @@ impl SimulationParameters {
         (self.e_field_norm.get(time) / E_REF) as f32 * self.e_field_dir.get(time)
     }
 
-    pub fn gpu_params(&self, time: f64) -> GPUParams {
-        let factor_1 = 1.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI);
+    pub fn gpu_params(&self, time: f64) -> GpuParams {
+        let factor_1 =
+            3.0 * MU_0 * self.mag_dipole.powi(2) / (4.0 * PI * self.rve_side_len.powi(4));
+        let factor_2 = self.char_time_scale / (self.t_drag * self.rve_side_len);
+        let h_force_prefactor = (factor_1 * factor_2) as f32;
+
+        let factor_1 = 3.0 / (EPSILON_0 * self.epsilon_mat * 2.0 * PI);
         let factor_2 = self.char_time_scale / (self.t_drag * self.rve_side_len);
         let factor_3 = (E_REF * self.particle_vol * EPSILON_0 * self.e_sus_x).powi(2)
             / self.rve_side_len.powi(4);
@@ -200,7 +205,7 @@ impl SimulationParameters {
             3.0 * MU_0 * self.mag_dipole.powi(2) / (2.0 * PI * (2.0 * self.radius_eq).powi(4));
         let factor_2 = self.char_time_scale / (self.t_drag * self.rve_side_len);
         let r_force_prefactor = (factor_1 * factor_2) as f32;
-        GPUParams {
+        GpuParams {
             ext_h_field: self.ext_h_field(time),
             ext_e_field: self.ext_e_field(time),
 
@@ -227,7 +232,7 @@ impl SimulationParameters {
             rve_side_len: self.rve_side_len as f32,
             repulsion_factor: self.repulsion_factor as f32,
             radius_eq: self.radius_eq as f32,
-            _pad: [0.0; _],
+            h_force_prefactor,
         }
     }
 
@@ -293,7 +298,9 @@ impl Into<SimulationParameters> for SimulationBuilder {
             small_saxis: self.small_saxis,
             big_saxis: self.big_saxis,
 
-            char_time_scale: 4.0 * PI * t_drag * rve_side_len.powi(5) / (3.0 * MU_0 * mag_dipole),
+            char_time_scale: 4.0 * PI * t_drag * rve_side_len * (2.0 * radius_eq).powi(4)
+                / (3.0 * MU_0 * mag_dipole.powi(2)),
+
             mag_moment_density: self.mag_moment_density,
 
             t_drag,
@@ -357,11 +364,14 @@ impl SimulationBuilder {
             .sample_iter(UnitVec)
             .take(params.particle_number)
             .collect();
-        let metal = crate::gpu::MetalState::new(&params, &positions, &directions);
+        let metal = crate::gpu::GpuState::new(&params, &positions, &directions);
 
         let gpu_params = params.gpu_params(0.0);
         metal.run_stage(Stage::EDipole, &gpu_params);
-        Simulation { params, metal }
+        Simulation {
+            params,
+            gpu_state: metal,
+        }
     }
 }
 

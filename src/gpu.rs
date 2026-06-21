@@ -17,7 +17,7 @@ use crate::params::SimulationParameters;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
-pub struct GPUParams {
+pub struct GpuParams {
     pub ext_h_field: Vec3,
     pub ext_e_field: Vec3,
 
@@ -34,7 +34,7 @@ pub struct GPUParams {
     pub rve_side_len: f32,
     pub repulsion_factor: f32,
     pub radius_eq: f32,
-    pub _pad: [f32; 1],
+    pub h_force_prefactor: f32,
 }
 
 #[repr(C)]
@@ -63,7 +63,7 @@ pub enum Stage {
     Direction(f32),
 }
 
-pub struct MetalState {
+pub struct GpuState {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pipeline_e_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_h_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -87,7 +87,7 @@ pub struct MetalState {
 
 const SHADER_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/shaders.metallib"));
 
-impl MetalState {
+impl GpuState {
     pub fn new(params: &SimulationParameters, positions: &[Vec3], directions: &[Vec3]) -> Self {
         let device = MTLCreateSystemDefaultDevice().expect("no metal device");
         let queue = device.newCommandQueue().unwrap();
@@ -178,232 +178,18 @@ impl MetalState {
     }
 }
 
-// fn field_bracket_term(rji: Vec3, dj: Vec3) -> Vec3 {
-//     3.0 * dj.dot(rji) * rji - dj
-// }
-
-#[allow(dead_code)]
-// carefull everything but update_velocity is out of date
-impl MetalState {
-    // pub fn update_e_dipole(&self, params: &GPUParams) {
-    //     unsafe {
-    //         let e_field = std::slice::from_raw_parts(
-    //             self.buf_e_field.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let direction = std::slice::from_raw_parts(
-    //             self.buf_direction.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let e_dipole = std::slice::from_raw_parts_mut(
-    //             self.buf_e_dipole.contents().as_mut() as *mut _ as *mut Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         for ((e_i, d_i), p_i) in e_field
-    //             .iter()
-    //             .zip(direction.iter())
-    //             .zip(e_dipole.iter_mut())
-    //         {
-    //             *p_i = params.left_dipole_prefactor * *e_i
-    //                 + params.right_dipole_prefactor * d_i.dot(*e_i) * *d_i
-    //         }
-    //     }
-    // }
-    //
-    // pub fn update_e_field(&self, params: &GPUParams) {
-    //     unsafe {
-    //         let pos = std::slice::from_raw_parts(
-    //             self.buf_position.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let e_dipole = std::slice::from_raw_parts(
-    //             self.buf_e_dipole.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let e_field = std::slice::from_raw_parts_mut(
-    //             self.buf_e_field.contents().as_mut() as *mut _ as *mut Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         for i in 0..(params.particle_number as usize) {
-    //             let mut e_field_i = params.ext_e_field;
-    //             for j in 0..(params.particle_number as usize) {
-    //                 if i == j {
-    //                     continue;
-    //                 }
-    //                 let r_ji = (*pos.get_unchecked(i) - *pos.get_unchecked(j)) % 1.0;
-    //                 let dist = r_ji.norm();
-    //                 let r_ji_hat = r_ji / dist;
-    //                 e_field_i += params.e_field_prefactor / dist.powi(3)
-    //                     * field_bracket_term(r_ji_hat, *e_dipole.get_unchecked(j));
-    //             }
-    //             *e_field.get_unchecked_mut(i) = e_field_i;
-    //         }
-    //     }
-    // }
-    //
-    // pub fn update_h_field(&self, params: &GPUParams) {
-    //     unsafe {
-    //         let pos = std::slice::from_raw_parts(
-    //             self.buf_position.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let dir = std::slice::from_raw_parts(
-    //             self.buf_direction.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let h_field = std::slice::from_raw_parts_mut(
-    //             self.buf_h_field.contents().as_mut() as *mut _ as *mut Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         for i in 0..(params.particle_number as usize) {
-    //             let mut h_field_i = params.ext_e_field;
-    //             for j in 0..(params.particle_number as usize) {
-    //                 if i == j {
-    //                     continue;
-    //                 }
-    //                 let r_ji = (*pos.get_unchecked(i) - *pos.get_unchecked(j)) % 1.0;
-    //                 let dist = r_ji.norm();
-    //                 let r_ji_hat = r_ji / dist;
-    //                 h_field_i += params.h_field_prefactor / dist.powi(3)
-    //                     * field_bracket_term(r_ji_hat, *dir.get_unchecked(j));
-    //             }
-    //             *h_field.get_unchecked_mut(i) = h_field_i;
-    //         }
-    //     }
-    // }
-
-    // FIXME: this is the cpu implementation
-    pub fn update_velocity(&self, params: &GPUParams) {
-        fn force_bracket_term(rji: Vec3, di: Vec3, dj: Vec3) -> Vec3 {
-            let f1_dot = di.dot(dj) - 5.0 * rji.dot(dj) * rji.dot(di);
-            let f1 = f1_dot * rji;
-            let f2 = rji.dot(di) * dj + rji.dot(dj) * di;
-            return f1 + f2;
-        }
-        unsafe {
-            let position = std::slice::from_raw_parts(
-                self.buf_position.contents().as_ptr() as *const Vec3,
-                params.particle_number as usize,
-            );
-            let direction = std::slice::from_raw_parts(
-                self.buf_direction.contents().as_ptr() as *const Vec3,
-                params.particle_number as usize,
-            );
-            let e_dipole = std::slice::from_raw_parts(
-                self.buf_e_dipole.contents().as_ptr() as *const Vec3,
-                params.particle_number as usize,
-            );
-            let velocity = std::slice::from_raw_parts_mut(
-                self.buf_velocity.contents().as_mut() as *mut _ as *mut Vec3,
-                params.particle_number as usize,
-            );
-            for i in 0..(params.particle_number as usize) {
-                let mut total_vel = Vec3::new(0.0, 0.0, 0.0);
-                for j in 0..(params.particle_number as usize) {
-                    if i == j {
-                        continue;
-                    }
-                    let r_ji = (*position.get_unchecked(i) - *position.get_unchecked(j)) % 1.0;
-                    let dist = r_ji.norm();
-                    let r_ji_hat = r_ji / dist;
-
-                    let f_h = (1.0 / dist.powi(4))
-                        * force_bracket_term(
-                            r_ji_hat,
-                            *direction.get_unchecked(i),
-                            *direction.get_unchecked(j),
-                        );
-
-                    // FIXME: the following lines:
-                    let f_e = (params.e_force_prefactor / dist.powi(4))
-                        * force_bracket_term(
-                            r_ji_hat,
-                            *e_dipole.get_unchecked(i),
-                            *e_dipole.get_unchecked(j),
-                        );
-
-                    let exponent = -params.repulsion_factor
-                        * (dist * params.rve_side_len / (2.0 * params.radius_eq) - 1.0);
-                    let f_r = params.r_force_prefactor * (exponent.exp() * r_ji_hat);
-
-                    total_vel += f_h + f_e + f_r;
-                }
-                *velocity.get_unchecked_mut(i) = total_vel;
-            }
-        }
-    }
-
-    // pub fn find_max_velocity(&self, params: &GPUParams) -> f32 {
-    //     unsafe {
-    //         let vels = std::slice::from_raw_parts(
-    //             self.buf_velocity.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let mut max_vel = 0.0;
-    //         for v in vels {
-    //             let v_norm = v.norm();
-    //             if v_norm > max_vel {
-    //                 max_vel = v_norm;
-    //             }
-    //         }
-    //         max_vel
-    //     }
-    // }
-    //
-    // pub fn update_position(&mut self, params: &GPUParams, delta_t: f32) {
-    //     unsafe {
-    //         let poss = std::slice::from_raw_parts_mut(
-    //             self.buf_position.contents().as_mut() as *mut _ as *mut Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let vels = std::slice::from_raw_parts(
-    //             self.buf_velocity.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         for (pos, vel) in poss.iter_mut().zip(vels.iter()) {
-    //             *pos = (*pos + delta_t * *vel) % 1.0;
-    //         }
-    //     }
-    // }
-    //
-    // pub fn update_direction(&mut self, params: &GPUParams, delta_t: f32) {
-    //     unsafe {
-    //         let direction = std::slice::from_raw_parts_mut(
-    //             self.buf_direction.contents().as_mut() as *mut _ as *mut Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let h_field = std::slice::from_raw_parts(
-    //             self.buf_h_field.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //         let e_field = std::slice::from_raw_parts(
-    //             self.buf_e_field.contents().as_ptr() as *const Vec3,
-    //             params.particle_number as usize,
-    //         );
-    //
-    //         for ((e_i, h_i), d_i) in e_field.iter().zip(h_field.iter()).zip(direction.iter_mut()) {
-    //             let magnetic = params.h_torque_prefactor * (*h_i - *d_i * h_i.dot(*d_i));
-    //             let electric =
-    //                 params.e_torque_prefactor * e_i.dot(*d_i) * (*e_i - *d_i * e_i.dot(*d_i));
-    //
-    //             let dir_vel = (magnetic + electric) / params.r_drag;
-    //
-    //             *d_i = (*d_i + delta_t * dir_vel).normalised();
-    //         }
-    //     }
-    // }
-
-    pub fn find_all_averages(&mut self, params: &GPUParams) {
+impl GpuState {
+    pub fn find_all_averages(&mut self, particle_number: usize) {
         macro_rules! get_avg {
             ($buf:expr) => {
                 let slice = std::slice::from_raw_parts(
                     $buf.contents().as_ptr() as *const Vec3,
-                    params.particle_number as usize,
+                    particle_number,
                 );
                 println!(
                     "average norm of {}: {}",
                     stringify!($buf),
-                    slice.iter().map(|v| v.norm()).sum::<f32>() / params.particle_number as f32
+                    slice.iter().map(|v| v.norm()).sum::<f32>() / particle_number as f32
                 )
             };
         }
@@ -418,17 +204,8 @@ impl MetalState {
     }
 }
 
-impl MetalState {
-    pub fn get_velocity_buf(&self, params: &GPUParams) -> &[Vec3] {
-        unsafe {
-            std::slice::from_raw_parts(
-                self.buf_velocity.contents().as_ptr() as *const Vec3,
-                params.particle_number as usize,
-            )
-        }
-    }
-
-    pub fn run_stage(&self, stage: Stage, params: &GPUParams) {
+impl GpuState {
+    pub fn run_stage(&self, stage: Stage, params: &GpuParams) {
         let (pipeline, buffers, delta_t) = match stage {
             Stage::EField => (
                 &*self.pipeline_e_field,
@@ -454,7 +231,6 @@ impl MetalState {
                 None,
             ),
             Stage::Velocity => (
-                // FIXME: this is where the GPU params are set
                 &*self.pipeline_velocity,
                 vec![
                     &*self.buf_position,
@@ -497,7 +273,7 @@ impl MetalState {
 
             encoder.setBytes_length_atIndex(
                 NonNull::new(params as *const _ as *mut _).unwrap(),
-                mem::size_of::<GPUParams>(),
+                mem::size_of::<GpuParams>(),
                 next_index as _,
             );
         }
@@ -520,7 +296,7 @@ impl MetalState {
         command_buffer.waitUntilCompleted();
     }
 
-    pub fn run_max_and_check(&self, params: &GPUParams) -> (f32, bool) {
+    pub fn run_max_and_check(&self, params: &GpuParams) -> (f32, bool) {
         let command_buffer = self.queue.commandBuffer().unwrap();
         let encoder = command_buffer.computeCommandEncoder().unwrap();
 
@@ -540,7 +316,7 @@ impl MetalState {
             }
             encoder.setBytes_length_atIndex(
                 NonNull::new(params as *const _ as *mut _).unwrap(),
-                mem::size_of::<GPUParams>(),
+                mem::size_of::<GpuParams>(),
                 buffers.len() as _,
             );
         }

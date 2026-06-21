@@ -1,4 +1,4 @@
-use std::{error::Error, f32::consts::TAU, fs::File, io::Write, path::Path, process::Command};
+use std::{error::Error, fs::File, io::Write, path::Path, process::Command};
 
 use chrono::{self, Local};
 
@@ -7,7 +7,7 @@ mod math;
 mod numpy;
 mod params;
 
-use gpu::{MetalState, Stage};
+use gpu::{GpuState, Stage};
 use math::Vec3;
 use params::{SimulationBuilder, SimulationParameters};
 use serde::Serialize;
@@ -31,7 +31,7 @@ impl SimulationSummary {
 
 pub struct Simulation {
     params: SimulationParameters,
-    metal: MetalState,
+    gpu_state: GpuState,
 }
 
 impl Simulation {
@@ -70,7 +70,7 @@ impl Simulation {
             let _ = write!(
                 stdout.lock(),
                 "{: >8.5} s/{: >6.2} s   ∆t = {: >8.2e} s  i = {: >8}\r",
-                current_time * self.params.char_time_scale,
+                current_time,
                 self.params.duration,
                 last_delta_t.iter().sum::<f64>() / last_delta_t.len() as f64,
                 i,
@@ -80,7 +80,7 @@ impl Simulation {
             if current_time
                 >= (log_step as f64 / self.params.log_frames as f64) * self.params.duration
             {
-                if let Err(err) = self.metal.run_plotting(
+                if let Err(err) = self.gpu_state.run_plotting(
                     &format!("{log_step:0>5}"),
                     &log_dir,
                     &self.params.frame_spec(current_time),
@@ -92,62 +92,25 @@ impl Simulation {
 
             let params = self.params.gpu_params(current_time);
 
-            for _ in 0..3 {
-                self.metal.run_stage(Stage::EField, &params);
-                self.metal.run_stage(Stage::EDipole, &params);
-            }
-            self.metal.run_stage(Stage::HField, &params);
-
-            if ("compare", i == 800).1 {
-                dbg!(&params);
-                self.metal.find_all_averages(&params);
-                // FIXME: comparison
-                self.metal.run_stage(Stage::Velocity, &params);
-                let gpu_results: Vec<Vec3> = self.metal.get_velocity_buf(&params).into();
-                self.metal.update_velocity(&params);
-                let mut max_err = 0.0;
-                let mut err_sum = 0.0;
-                let mut max_angle = 0.0;
-                let mut angle_sum = 0.0;
-                for (rel_err, angle_err) in gpu_results
-                    .iter()
-                    .zip(self.metal.get_velocity_buf(&params))
-                    .map(|(gpu, cpu)| {
-                        let gpu_norm = gpu.norm();
-                        let cpu_norm = cpu.norm();
-                        (
-                            (gpu_norm - cpu_norm) / cpu_norm,
-                            (gpu.dot(*cpu) / (gpu_norm * cpu_norm)).acos(),
-                        )
-                    })
-                {
-                    err_sum += rel_err;
-                    angle_sum += angle_err;
-                    if max_err < rel_err {
-                        max_err = rel_err
-                    }
-                    if max_angle < angle_err {
-                        max_angle = angle_err
-                    }
-                }
-                println!(
-                    "Relative Magnitude error  max: {}  avg: {}",
-                    max_err,
-                    err_sum / params.particle_number as f32
-                );
-                println!(
-                    "Angle error  max: {} degrees  avg: {} degrees",
-                    max_angle / TAU * 360.0,
-                    angle_sum / params.particle_number as f32 / TAU * 360.0
-                );
+            if false {
                 println!();
-                // panic!("reached comparison");
-            } else if ("run metal function", false).1 {
-                self.metal.run_stage(Stage::Velocity, &params);
-            } else {
-                self.metal.update_velocity(&params);
+                dbg!(&params);
+                println!(
+                    "scaled delta t: {}",
+                    last_delta_t[(i - 1) % last_delta_t.len()] / self.params.char_time_scale
+                );
+                self.gpu_state
+                    .find_all_averages(self.params.particle_number);
             }
-            let (max_vel, finite) = self.metal.run_max_and_check(&params);
+
+            for _ in 0..3 {
+                self.gpu_state.run_stage(Stage::EField, &params);
+                self.gpu_state.run_stage(Stage::EDipole, &params);
+            }
+            self.gpu_state.run_stage(Stage::HField, &params);
+
+            self.gpu_state.run_stage(Stage::Velocity, &params);
+            let (max_vel, finite) = self.gpu_state.run_max_and_check(&params);
             if !finite {
                 break false;
             }
@@ -155,9 +118,9 @@ impl Simulation {
                 / (max_vel as f64 * self.params.rve_side_len))
                 .min(2e-5);
 
-            self.metal
+            self.gpu_state
                 .run_stage(Stage::Position(delta_t as f32), &params);
-            self.metal
+            self.gpu_state
                 .run_stage(Stage::Direction(delta_t as f32), &params);
 
             i += 1;
@@ -169,14 +132,14 @@ impl Simulation {
             }
         };
 
-        if let Err(err) = self.metal.run_plotting(
+        if let Err(err) = self.gpu_state.run_plotting(
             &format!("{log_step:0>5}"),
             &log_dir,
             &self.params.frame_spec(current_time),
         ) {
             eprintln!("could not log: {err}");
         }
-        if let Err(err) = self.metal.log_state(
+        if let Err(err) = self.gpu_state.log_state(
             &format!("{log_step:0>5}"),
             &log_dir,
             self.params.particle_number,
@@ -208,6 +171,7 @@ fn main() {
         let mut b = Simulation::new();
         b.duration = 0.08;
         b.particle_number = 100;
+        b.h_field_norm = Value(0.0);
         b.build()
     }];
     let len = simulations.len();

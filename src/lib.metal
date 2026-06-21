@@ -18,7 +18,7 @@ struct GPUParams {
   float rve_side_len;
   float repulsion_factor;
   float radius_eq;
-  float _pad;
+  float h_force_prefactor;
 };
 
 float pow3(float val) { return val * val * val; }
@@ -103,7 +103,6 @@ float3 force_bracket_term(float3 rji, float3 di, float3 dj) {
   return f1 + f2;
 }
 
-// FIXME: this is the GPU implementation
 kernel void update_velocity(device const float4 *position [[buffer(0)]],
                             device const float4 *direction [[buffer(1)]],
                             device const float4 *e_dipole [[buffer(2)]],
@@ -128,11 +127,10 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
     float3 r_ji_hat = r_ji / dist;
 
     // magnetic
-    float3 f_h = (1 / pow4(dist)) *
+    float3 f_h = (params.h_force_prefactor / pow4(dist)) *
                  force_bracket_term(r_ji_hat, dir_i, direction[j].xyz);
 
     // electric
-    // FIXME: this is the error
     float3 f_e = (params.e_force_prefactor / pow4(dist)) *
                  force_bracket_term(r_ji_hat, dipole_i, e_dipole[j].xyz);
 
