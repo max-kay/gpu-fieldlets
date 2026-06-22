@@ -367,7 +367,9 @@ impl SimulationBuilder {
         let metal = crate::gpu::GpuState::new(&params, &positions, &directions);
 
         let gpu_params = params.gpu_params(0.0);
-        metal.run_stage(Stage::EDipole, &gpu_params);
+        let pass = metal.begin_pass(&gpu_params, None);
+        pass.dispatch(Stage::EDipole);
+        pass.commit_and_wait();
         Simulation {
             params,
             gpu_state: metal,

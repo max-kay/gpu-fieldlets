@@ -80,48 +80,34 @@ impl Simulation {
             if current_time
                 >= (log_step as f64 / self.params.log_frames as f64) * self.params.duration
             {
-                if let Err(err) = self.gpu_state.run_plotting(
-                    &format!("{log_step:0>5}"),
-                    &log_dir,
+                self.gpu_state.render_to_png(
                     &self.params.frame_spec(current_time),
-                ) {
-                    eprintln!("could not log: {err}");
-                }
+                    &format!("{}/frame_{:0>5}.png", log_dir, log_step),
+                );
                 log_step += 1;
             }
 
             let params = self.params.gpu_params(current_time);
 
-            if false {
-                println!();
-                dbg!(&params);
-                println!(
-                    "scaled delta t: {}",
-                    last_delta_t[(i - 1) % last_delta_t.len()] / self.params.char_time_scale
-                );
-                self.gpu_state
-                    .find_all_averages(self.params.particle_number);
-            }
-
+            let pass1 = self.gpu_state.begin_pass(&params, None);
             for _ in 0..3 {
-                self.gpu_state.run_stage(Stage::EField, &params);
-                self.gpu_state.run_stage(Stage::EDipole, &params);
+                pass1.dispatch(Stage::EField);
+                pass1.dispatch(Stage::EDipole);
             }
-            self.gpu_state.run_stage(Stage::HField, &params);
+            pass1.dispatch(Stage::HField);
+            pass1.dispatch(Stage::Velocity);
+            pass1.dispatch(Stage::CheckMaxVel);
+            pass1.commit_and_wait();
 
-            self.gpu_state.run_stage(Stage::Velocity, &params);
-            let (max_vel, finite) = self.gpu_state.run_max_and_check(&params);
-            if !finite {
-                break false;
-            }
+            let max_vel = self.gpu_state.read_max_vel();
             let delta_t = (self.params.radius_eq * self.params.velocity_factor
                 / (max_vel as f64 * self.params.rve_side_len))
-                .min(2e-5);
+                .min(2e-5 / self.params.char_time_scale);
 
-            self.gpu_state
-                .run_stage(Stage::Position(delta_t as f32), &params);
-            self.gpu_state
-                .run_stage(Stage::Direction(delta_t as f32), &params);
+            let pass2 = self.gpu_state.begin_pass(&params, Some(delta_t as f32));
+            pass2.dispatch(Stage::Position);
+            pass2.dispatch(Stage::Direction);
+            pass2.commit();
 
             i += 1;
             current_time += delta_t * self.params.char_time_scale;
@@ -132,16 +118,12 @@ impl Simulation {
             }
         };
 
-        if let Err(err) = self.gpu_state.run_plotting(
-            &format!("{log_step:0>5}"),
-            &log_dir,
+        self.gpu_state.render_to_png(
             &self.params.frame_spec(current_time),
-        ) {
-            eprintln!("could not log: {err}");
-        }
+            &format!("{}/frame_{:0>5}.png", log_dir, log_step),
+        );
         if let Err(err) = self.gpu_state.log_state(
-            &format!("{log_step:0>5}"),
-            &log_dir,
+            format!("{}/end_state", log_dir),
             self.params.particle_number,
         ) {
             eprintln!("could not log: {err}");
@@ -158,8 +140,29 @@ impl Simulation {
         if let Err(err) = summary.to_json(format!("{}/summary.json", log_dir)) {
             eprintln!("could not log configuration: {err}")
         }
-        println!("\nfinished in {:.0} s", real_time);
+        println!("\nfinished in {}", format_seconds(real_time));
         return summary;
+    }
+}
+
+fn format_seconds(seconds: f64) -> String {
+    let hours = (seconds / (60.0 * 60.0)).floor() as u32;
+    let minutes = ((seconds - hours as f64 * (60.0 * 60.0)) / 60.0).floor() as u32;
+    if hours != 0 {
+        format!(
+            "{}h {}min {}s",
+            hours,
+            minutes,
+            (seconds - hours as f64 * (60.0 * 60.0) - minutes as f64 * 60.0).floor() as u32
+        )
+    } else if minutes != 0 {
+        format!(
+            "{}min {:.3}s",
+            minutes,
+            (seconds - hours as f64 * (60.0 * 60.0) - minutes as f64 * 60.0)
+        )
+    } else {
+        format!("{:.5}s", seconds)
     }
 }
 
@@ -171,7 +174,7 @@ fn main() {
         let mut b = Simulation::new();
         b.duration = 0.08;
         b.particle_number = 100;
-        b.h_field_norm = Value(0.0);
+        b.e_field_norm = Value(0.0);
         b.build()
     }];
     let len = simulations.len();

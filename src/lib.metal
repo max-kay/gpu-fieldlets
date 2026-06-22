@@ -29,7 +29,7 @@ float3 mod_one(float3 r) { return r - round(r); }
 kernel void update_e_dipole(device const float4 *e_field [[buffer(0)]],
                             device const float4 *direction [[buffer(1)]],
                             device float4 *e_dipole [[buffer(2)]],
-                            constant GPUParams &params [[buffer(3)]],
+                            constant GPUParams &params [[buffer(8)]],
                             uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -49,7 +49,7 @@ float3 field_bracket_term(float3 rji, float3 dj) {
 kernel void update_e_field(device const float4 *position [[buffer(0)]],
                            device const float4 *e_dipole [[buffer(1)]],
                            device float4 *e_field [[buffer(2)]],
-                           constant GPUParams &params [[buffer(3)]],
+                           constant GPUParams &params [[buffer(8)]],
                            uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -74,7 +74,7 @@ kernel void update_e_field(device const float4 *position [[buffer(0)]],
 kernel void update_h_field(device const float4 *position [[buffer(0)]],
                            device const float4 *direction [[buffer(1)]],
                            device float4 *h_field [[buffer(2)]],
-                           constant GPUParams &params [[buffer(3)]],
+                           constant GPUParams &params [[buffer(8)]],
                            uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -107,7 +107,7 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
                             device const float4 *direction [[buffer(1)]],
                             device const float4 *e_dipole [[buffer(2)]],
                             device float4 *velocity [[buffer(3)]],
-                            constant GPUParams &params [[buffer(4)]],
+                            constant GPUParams &params [[buffer(8)]],
                             uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -148,8 +148,8 @@ kernel void update_velocity(device const float4 *position [[buffer(0)]],
 
 kernel void update_position(device float4 *position [[buffer(0)]],
                             device const float4 *pos_vel [[buffer(1)]],
-                            constant float &delta_t [[buffer(2)]],
-                            constant GPUParams &params [[buffer(3)]],
+                            constant float &delta_t [[buffer(9)]],
+                            constant GPUParams &params [[buffer(8)]],
                             uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -161,8 +161,8 @@ kernel void update_position(device float4 *position [[buffer(0)]],
 kernel void update_direction(device float4 *direction [[buffer(0)]],
                              device const float4 *h_field [[buffer(1)]],
                              device const float4 *e_field [[buffer(2)]],
-                             constant float &delta_t [[buffer(3)]],
-                             constant GPUParams &params [[buffer(4)]],
+                             constant float &delta_t [[buffer(9)]],
+                             constant GPUParams &params [[buffer(8)]],
                              uint i [[thread_position_in_grid]]) {
   if (i >= params.particle_number)
     return;
@@ -181,35 +181,17 @@ kernel void update_direction(device float4 *direction [[buffer(0)]],
 }
 
 kernel void
-check_finite_and_max_vel(device const float4 *el_dipole_moments [[buffer(0)]],
-                         device const float4 *e_field [[buffer(1)]],
-                         device const float4 *h_field [[buffer(2)]],
-                         device const float4 *positions [[buffer(3)]],
-                         device const float4 *directions [[buffer(4)]],
-                         device const float4 *pos_vel [[buffer(5)]],
-                         device float *output [[buffer(6)]],
-                         constant GPUParams &params [[buffer(7)]],
-                         uint i [[thread_position_in_grid]]) {
+check_max_vel(device const float4 *pos_vel [[buffer(0)]],
+              device float *output [[buffer(1)]],
+              constant GPUParams &params [[buffer(8)]],
+              uint i [[thread_position_in_grid]]) {
   if (i != 0)
     return;
 
   float max_v = 0.0;
-  bool finite = true;
-
   for (uint j = 0; j < params.particle_number; j++) {
     max_v = max(max_v, length(pos_vel[j].xyz));
-
-    finite &= all(isfinite(el_dipole_moments[j]));
-    finite &= all(isfinite(e_field[j]));
-    finite &= all(isfinite(h_field[j]));
-    finite &= all(isfinite(positions[j]));
-    finite &= all(isfinite(directions[j]));
-    finite &= all(isfinite(pos_vel[j]));
-
-    if (!finite)
-      break;
   }
 
   output[0] = max_v;
-  output[1] = finite ? 1.0 : 0.0;
 }
