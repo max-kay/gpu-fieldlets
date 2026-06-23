@@ -245,28 +245,52 @@ impl SimulationParameters {
     pub fn frame_spec(&self, time: f64) -> FrameSpec {
         let root = self.camera.root.get(time);
         let dist = root.norm();
-        let scale =
-            f32::sqrt(3.0) * 1.2 / (self.camera.dims[0].min(self.camera.dims[1]) as f32) / dist;
+        let aspect = self.camera.dims[0] as f32 / self.camera.dims[1] as f32;
+
         let dir = -root.normalised();
-        let u_s2 = -dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
-        let u_s1 = dir.cross(u_s2).normalised();
+        let u_s1 = dir.cross(Vec3::new(0.0, 0.0, 1.0)).normalised();
+        let u_s2 = u_s1.cross(dir).normalised();
+
+        let sphere_radius = 0.5 * f32::sqrt(3.0);
+        let padding = 1.8;
+
+        let half_fov_y = (sphere_radius * padding / dist).asin();
+
+        let half_height = half_fov_y.tan();
+        let half_width = half_height * aspect;
+
+        let center_to_corner2 = padding.powi(2) / 4.0 * (1.0 + aspect.powi(2));
+        let discriminant =
+            (8.0 * center_to_corner2 + 2.0).powi(2) - 4.0 * (4.0 * center_to_corner2 - 1.0).powi(2);
+
+        let extra_padding = 1.1;
+        let sub_window_ratio = (8.0 * center_to_corner2 + 2.0 - f32::sqrt(discriminant))
+            / (8.0 * center_to_corner2 - 2.0)
+            / extra_padding;
+        let sub_screen_width = (self.camera.dims[0] as f32 * sub_window_ratio) as u32;
+        let sub_screen_height = (self.camera.dims[1] as f32 * sub_window_ratio) as u32;
+
         FrameSpec {
             dims: self.camera.dims,
+            sub_img_dims: [sub_screen_width, sub_screen_height],
+
             particle_number: self.particle_number as u32,
             oversamples: self.camera.oversamples,
+            ambient_light: (self.camera.ambient_light) as f32,
+            culling_radius: 1.0 / padding,
+
             cam_root: root,
-            cam_s1: u_s1 * scale,
-            cam_s2: u_s2 * scale,
+            cam_s1: u_s1 * half_width,
+            cam_s2: u_s2 * half_height,
             cam_dir: dir,
             ell_axes: Vec3::new(
                 (self.big_saxis / self.rve_side_len) as f32,
                 (self.big_saxis / self.rve_side_len) as f32,
                 (self.small_saxis / self.rve_side_len) as f32,
             ),
-            ell_color: self.camera.particle_color,
             light_dir: self.camera.light_dir,
-            bg_color: self.camera.background,
-            ambient_light: (self.camera.ambient_light) as f32,
+            h_field: self.h_field_dir.get(time),
+            e_field: self.ext_e_field(time),
         }
     }
 }
@@ -364,16 +388,13 @@ impl SimulationBuilder {
             .sample_iter(UnitVec)
             .take(params.particle_number)
             .collect();
-        let metal = crate::gpu::GpuState::new(&params, &positions, &directions);
+        let gpu_state = crate::gpu::GpuState::new(&params, &positions, &directions);
 
         let gpu_params = params.gpu_params(0.0);
-        let pass = metal.begin_pass(&gpu_params, None);
+        let pass = gpu_state.begin_pass(&gpu_params, None);
         pass.dispatch(Stage::EDipole);
         pass.commit_and_wait();
-        Simulation {
-            params,
-            gpu_state: metal,
-        }
+        Simulation { params, gpu_state }
     }
 }
 
@@ -382,8 +403,6 @@ pub struct CameraBuilder {
     pub dims: [u32; 2],
     pub root: ValueOrFn<Vec3>,
     pub oversamples: u32,
-    pub background: Vec3,
-    pub particle_color: Vec3,
     pub light_dir: Vec3,
     pub ambient_light: f64,
 }
@@ -393,10 +412,8 @@ impl Default for CameraBuilder {
         use ValueOrFn::Value;
         Self {
             dims: [1000, 800],
-            root: Value(3.0 * Vec3::new(1.0, 0.5, 1.0)),
+            root: Value(3.0 * Vec3::new(1.0, 1.0, 1.0)),
             oversamples: 3,
-            background: Vec3::new(1.0, 1.0, 1.0),
-            particle_color: Vec3::new(0.3, 0.12, 0.8),
             light_dir: Vec3::new(-0.8, 0.4, 2.5).normalised(),
             ambient_light: 0.8,
         }

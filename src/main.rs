@@ -43,7 +43,7 @@ impl Simulation {
         let mut num = 0;
         loop {
             let dir = format!("out/{}_{}", Local::now().format("%Y-%m-%d_%H-%M-%S"), num);
-            match std::fs::create_dir(&dir) {
+            match std::fs::create_dir_all(&dir) {
                 Ok(()) => return dir,
                 Err(err) => match err.kind() {
                     std::io::ErrorKind::AlreadyExists => num += 1,
@@ -172,9 +172,10 @@ fn main() {
 
     let mut simulations: Vec<_> = vec![{
         let mut b = Simulation::new();
-        b.duration = 0.08;
+        b.duration = 1.0;
         b.particle_number = 100;
-        b.e_field_norm = Value(0.0);
+        // b.e_field_norm = Value(0.0);
+        b.log_frames = 300;
         b.build()
     }];
     let len = simulations.len();

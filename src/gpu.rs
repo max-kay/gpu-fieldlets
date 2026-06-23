@@ -42,18 +42,21 @@ pub struct GpuParams {
 #[derive(Copy, Clone)]
 pub struct FrameSpec {
     pub dims: [u32; 2],
+    pub sub_img_dims: [u32; 2],
+
     pub particle_number: u32,
     pub oversamples: u32,
+    pub ambient_light: f32,
+    pub culling_radius: f32,
 
     pub cam_root: Vec3,
     pub cam_s1: Vec3,
     pub cam_s2: Vec3,
     pub cam_dir: Vec3,
     pub ell_axes: Vec3,
-    pub ell_color: Vec3,
     pub light_dir: Vec3,
-    pub bg_color: Vec3,
-    pub ambient_light: f32,
+    pub h_field: Vec3,
+    pub e_field: Vec3,
 }
 
 pub enum Stage {
