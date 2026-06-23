@@ -7,3 +7,4 @@ Because of its dependency on the metal shading language this code only runs on M
 For the creation of animations this project depends on ffmpeg.
 
 Build with `cargo build --release` run with `cargo run --release`
+There is a build dependency on `xcrun -sdk macosx metal`
