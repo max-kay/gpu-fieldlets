@@ -2,8 +2,11 @@ use std::mem;
 use std::path::Path;
 use std::ptr::NonNull;
 
+use ab_glyph::{FontVec, PxScale};
 use dispatch2::DispatchData;
-use image::{ImageBuffer, Rgba};
+use image::ImageBuffer;
+use image::Rgba;
+use imageproc::drawing::draw_text_mut;
 use objc2::{rc::Retained, runtime::ProtocolObject};
 use objc2_foundation::{NSString, NSUInteger};
 use objc2_metal::{
@@ -14,7 +17,62 @@ use objc2_metal::{
 
 use crate::math::Vec3;
 use crate::numpy::Numpy;
+use crate::params::E_REF;
+use crate::params::H_REF;
 use crate::params::SimulationParameters;
+
+fn get_font() -> Option<&'static FontVec> {
+    use std::sync::OnceLock;
+    static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        let candidates = [
+            "/System/Library/Fonts/Monaco.ttf",
+            "/System/Library/Fonts/Supplemental/Courier New.ttf",
+            "/Library/Fonts/Courier New.ttf",
+        ];
+        candidates
+            .iter()
+            .find_map(|p| std::fs::read(p).ok())
+            .and_then(|bytes| FontVec::try_from_vec(bytes).ok())
+    })
+    .as_ref()
+}
+
+fn draw_title(img: &mut ImageBuffer<Rgba<u8>, &mut [u8]>, text: &str) {
+    let Some(font) = get_font() else { return };
+    let size = img.height() as f32 / 20.0;
+    let scale = PxScale::from(size);
+    let padding = (size / 2.0) as i32;
+    let width = imageproc::drawing::text_size(scale, font, text).0;
+
+    draw_text_mut(
+        img,
+        Rgba([0, 0, 0, 255]),
+        (img.width() - width) as i32 / 2,
+        padding,
+        scale,
+        font,
+        text,
+    );
+}
+
+fn draw_bottom_side(img: &mut ImageBuffer<Rgba<u8>, &mut [u8]>, text: &str, center: f32) {
+    let Some(font) = get_font() else { return };
+    let size = img.height() as f32 / 35.0;
+    let scale = PxScale::from(size);
+    let padding = (size / 2.0) as i32;
+    let width = imageproc::drawing::text_size(scale, font, text).0;
+
+    draw_text_mut(
+        img,
+        Rgba([0, 0, 0, 255]),
+        (center - width as f32 / 2.0) as i32,
+        img.height() as i32 - scale.round().y as i32 - padding,
+        scale,
+        font,
+        text,
+    );
+}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -36,6 +94,28 @@ pub struct GpuParams {
     pub repulsion_factor: f32,
     pub radius_eq: f32,
     pub h_force_prefactor: f32,
+}
+
+impl GpuParams {
+    pub fn get_h_text(&self) -> Option<String> {
+        if self.ext_h_field.norm() < 0.001 {
+            return None;
+        }
+        Some(format!(
+            "H = {:.2e} A/m",
+            (self.ext_h_field * H_REF as f32).norm()
+        ))
+    }
+
+    pub fn get_e_text(&self) -> Option<String> {
+        if self.ext_e_field.norm() < 0.001 {
+            return None;
+        }
+        Some(format!(
+            "E = {:.2e} V/m",
+            (self.ext_e_field * E_REF as f32).norm()
+        ))
+    }
 }
 
 #[repr(C)]
@@ -71,7 +151,6 @@ pub enum Stage {
 
 pub struct GpuState {
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
-    render_queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
     pipeline_e_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_h_field: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
     pipeline_e_dipole: Retained<ProtocolObject<dyn MTLComputePipelineState>>,
@@ -116,7 +195,6 @@ impl GpuState {
         unsafe {
             Self {
                 queue,
-                render_queue: device.newCommandQueue().unwrap(),
                 pipeline_e_field: get_pipeline("update_e_field"),
                 pipeline_h_field: get_pipeline("update_h_field"),
                 pipeline_e_dipole: get_pipeline("update_e_dipole"),
@@ -130,14 +208,14 @@ impl GpuState {
                     .newBufferWithBytes_length_options(
                         NonNull::new(positions.as_ptr() as *mut _).unwrap(),
                         mem::size_of_val(positions),
-                        MTLResourceOptions::StorageModeShared,
+                        MTLResourceOptions::StorageModePrivate,
                     )
                     .unwrap(),
                 buf_direction: device
                     .newBufferWithBytes_length_options(
                         NonNull::new(directions.as_ptr() as *mut _).unwrap(),
                         mem::size_of_val(directions),
-                        MTLResourceOptions::StorageModeShared,
+                        MTLResourceOptions::StorageModePrivate,
                     )
                     .unwrap(),
                 buf_e_dipole: device
@@ -321,12 +399,9 @@ impl<'a> GpuPass<'a> {
 }
 
 impl GpuState {
-    pub fn render_to_png(&self, spec: &FrameSpec, path: impl AsRef<Path>) {
-        let copy_cb = self.queue.commandBuffer().unwrap();
-        copy_cb.commit();
-        copy_cb.waitUntilCompleted();
+    pub fn render_frame(&self, spec: &FrameSpec) -> Retained<ProtocolObject<dyn MTLBuffer>> {
+        let command_buffer = self.queue.commandBuffer().unwrap();
 
-        let command_buffer = self.render_queue.commandBuffer().unwrap();
         let encoder = command_buffer.computeCommandEncoder().unwrap();
         encoder.setComputePipelineState(&self.pipeline_render);
 
@@ -362,22 +437,53 @@ impl GpuState {
         };
         encoder.dispatchThreads_threadsPerThreadgroup(threads_per_grid, threads_per_threadgroup);
         encoder.endEncoding();
-        command_buffer.commit();
 
+        command_buffer.commit();
         command_buffer.waitUntilCompleted();
+
+        buf_img
+    }
+
+    pub fn render_to_png(
+        &self,
+        spec: &FrameSpec,
+        path: impl AsRef<Path>,
+        time_stamp: String,
+        h_field_text: Option<String>,
+        e_field_text: Option<String>,
+    ) {
+        let buf_img = self.render_frame(spec);
         let path = path.as_ref().to_owned();
         let dims = spec.dims;
-        let buffer = unsafe {
-            std::slice::from_raw_parts(
-                buf_img.contents().as_ptr() as *const u8,
-                (dims[0] * dims[1]) as usize * mem::size_of::<u32>(),
-            )
-        };
-        let buffer_vec = buffer.to_vec();
+        let l_center = spec.sub_img_dims[0] as f32 / 2.0;
+        let r_center = spec.dims[0] as f32 - l_center;
+
+        struct SendWrapper(Retained<ProtocolObject<dyn MTLBuffer>>);
+        unsafe impl Send for SendWrapper {}
+        let wrapped_buf = SendWrapper(buf_img);
+
         std::thread::spawn(move || {
-            let img_buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(dims[0], dims[1], buffer_vec)
-                .expect("Buffer size does not match the specified width and height");
-            let _ = img_buffer.save(path);
+            unsafe {
+                let raw_slice = std::slice::from_raw_parts_mut(
+                    wrapped_buf.0.contents().as_ptr() as *mut u8,
+                    (dims[0] * dims[1]) as usize * mem::size_of::<u32>(),
+                );
+
+                let mut img_buffer =
+                    ImageBuffer::<Rgba<u8>, &mut [u8]>::from_raw(dims[0], dims[1], raw_slice)
+                        .expect("Buffer size mismatch");
+                draw_title(&mut img_buffer, &time_stamp);
+
+                if let Some(bl) = h_field_text.as_ref() {
+                    draw_bottom_side(&mut img_buffer, bl, l_center);
+                };
+
+                if let Some(br) = e_field_text.as_ref() {
+                    draw_bottom_side(&mut img_buffer, br, r_center);
+                };
+                let _ = img_buffer.save(path);
+            };
+            drop(wrapped_buf);
         });
     }
 

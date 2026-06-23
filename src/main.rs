@@ -1,4 +1,10 @@
-use std::{error::Error, fs::File, io::Write, path::Path, process::Command};
+use std::{
+    error::Error,
+    fs::{self, File},
+    io::Write,
+    path::Path,
+    process::Command,
+};
 
 use chrono::{self, Local};
 
@@ -16,7 +22,6 @@ use serde::Serialize;
 struct SimulationSummary {
     iterations_ran: usize,
     log_dir: String,
-    success: bool,
     simulation_time: f64,
     real_time: f64,
 }
@@ -39,23 +44,7 @@ impl Simulation {
         SimulationBuilder::default()
     }
 
-    fn make_log_dir() -> String {
-        let mut num = 0;
-        loop {
-            let dir = format!("out/{}_{}", Local::now().format("%Y-%m-%d_%H-%M-%S"), num);
-            match std::fs::create_dir_all(&dir) {
-                Ok(()) => return dir,
-                Err(err) => match err.kind() {
-                    std::io::ErrorKind::AlreadyExists => num += 1,
-                    _ => panic!("could not create log dir"),
-                },
-            }
-        }
-    }
-
-    fn run(&mut self) -> SimulationSummary {
-        let log_dir = Self::make_log_dir();
-
+    fn run(&mut self, log_dir: &str) -> SimulationSummary {
         if let Err(err) = self.params.to_json(format!("{}/config.json", log_dir)) {
             eprintln!("could not log configuration: {err}")
         }
@@ -66,7 +55,8 @@ impl Simulation {
         let mut last_delta_t: Vec<f64> = vec![0.0; 64];
         let mut log_step = 0;
         let start = std::time::Instant::now();
-        let success = loop {
+        let mut params;
+        loop {
             let _ = write!(
                 stdout.lock(),
                 "{: >8.5} s/{: >6.2} s   ∆t = {: >8.2e} s  i = {: >8}\r",
@@ -77,17 +67,7 @@ impl Simulation {
             );
             let _ = stdout.flush();
 
-            if current_time
-                >= (log_step as f64 / self.params.log_frames as f64) * self.params.duration
-            {
-                self.gpu_state.render_to_png(
-                    &self.params.frame_spec(current_time),
-                    &format!("{}/frame_{:0>5}.png", log_dir, log_step),
-                );
-                log_step += 1;
-            }
-
-            let params = self.params.gpu_params(current_time);
+            params = self.params.gpu_params(current_time);
 
             let pass1 = self.gpu_state.begin_pass(&params, None);
             for _ in 0..3 {
@@ -109,18 +89,34 @@ impl Simulation {
             pass2.dispatch(Stage::Direction);
             pass2.commit();
 
+            if current_time
+                >= (log_step as f64 / self.params.log_frames as f64) * self.params.duration
+            {
+                self.gpu_state.render_to_png(
+                    &self.params.frame_spec(current_time),
+                    &format!("{}/frame_{:0>5}.png", log_dir, log_step),
+                    format!("{: >8.5} s", current_time),
+                    params.get_h_text(),
+                    params.get_e_text(),
+                );
+                log_step += 1;
+            }
+
             i += 1;
             current_time += delta_t * self.params.char_time_scale;
             let idx = i % last_delta_t.len();
             last_delta_t[idx] = delta_t * self.params.char_time_scale;
             if current_time > self.params.duration {
-                break true;
+                break;
             }
-        };
+        }
 
         self.gpu_state.render_to_png(
             &self.params.frame_spec(current_time),
             &format!("{}/frame_{:0>5}.png", log_dir, log_step),
+            format!("{: >8.5} s", current_time),
+            params.get_h_text(),
+            params.get_e_text(),
         );
         if let Err(err) = self.gpu_state.log_state(
             format!("{}/end_state", log_dir),
@@ -132,15 +128,14 @@ impl Simulation {
         let real_time = start.elapsed().as_secs_f64();
         let summary = SimulationSummary {
             iterations_ran: i,
-            log_dir: log_dir.clone(),
+            log_dir: log_dir.to_string(),
             simulation_time: current_time,
             real_time,
-            success,
         };
         if let Err(err) = summary.to_json(format!("{}/summary.json", log_dir)) {
             eprintln!("could not log configuration: {err}")
         }
-        println!("\nfinished in {}", format_seconds(real_time));
+        println!();
         return summary;
     }
 }
@@ -165,34 +160,57 @@ fn format_seconds(seconds: f64) -> String {
         format!("{:.5}s", seconds)
     }
 }
+fn make_log_dir() -> String {
+    let mut num = 0;
+    loop {
+        let dir = format!("out/{}_{}", Local::now().format("%Y-%m-%d_%H-%M-%S"), num);
+        match std::fs::create_dir_all(&dir) {
+            Ok(()) => return dir,
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::AlreadyExists => num += 1,
+                _ => panic!("could not create log dir"),
+            },
+        }
+    }
+}
 
 fn main() {
-    #[allow(unused)]
-    use params::ValueOrFn::{Fn, Value};
+    let path = Path::new("small");
 
-    let mut simulations: Vec<_> = vec![{
-        let mut b = Simulation::new();
-        b.duration = 1.0;
-        b.particle_number = 100;
-        // b.e_field_norm = Value(0.0);
-        b.log_frames = 300;
-        b.build()
-    }];
+    let mut simulations: Vec<Simulation> = Vec::new();
+
+    // Read the directory entries
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let file_path = entry.path();
+
+            // Ensure we are only reading files (and optionally checking for .json extension)
+            if file_path.is_file() && file_path.extension().and_then(|s| s.to_str()) == Some("json")
+            {
+                // Read the file content to a string
+                if let Ok(content) = fs::read_to_string(&file_path) {
+                    // Deserialize the JSON content into a Simulation instance
+                    match serde_json::from_str::<SimulationBuilder>(&content) {
+                        Ok(b) => simulations.push(b.build()),
+                        Err(e) => eprintln!("Failed to deserialize {:?}: {}", file_path, e),
+                    }
+                }
+            }
+        }
+    } else {
+        eprintln!("Failed to read directory: {:?}", path);
+    }
     let len = simulations.len();
     for (i, s) in simulations.iter_mut().enumerate() {
-        println!("\rsimulation of `{}` {}/{}", s.params.name, i + 1, len);
-        let summary = s.run();
-        if summary.success {
-            println!("success");
-        } else {
-            println!("failed");
-        }
+        let log_dir = make_log_dir();
+        println!("{}/{} simulation of `{}`", i + 1, len, s.params.name);
+        println!("output directory: {log_dir}");
+        let summary = s.run(&log_dir);
         println!(
-            "average ∆t = {:.3e} s",
-            summary.simulation_time / summary.iterations_ran as f64
+            "finished in {} average ∆t = {:.3e} s",
+            format_seconds(summary.real_time),
+            summary.simulation_time / summary.iterations_ran as f64,
         );
-        println!("log dir: `{}`", summary.log_dir);
-        println!();
         let anim_fname = format!("{}_{}.mp4", summary.log_dir, s.params.name);
         if Command::new("ffmpeg")
             .args(&["-loglevel", "error"])
@@ -207,7 +225,7 @@ fn main() {
             .output()
             .is_ok()
         {
-            println!("created animation")
+            println!("created animation: {anim_fname}")
         } else {
             println!("failed to create animation")
         };

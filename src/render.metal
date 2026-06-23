@@ -1,6 +1,8 @@
 #include <metal_stdlib>
 using namespace metal;
 
+#define T_MAX ((float)10000.0)
+
 #define ELL_COLOR (float3(0.55, 0.08, 0.6))
 #define H_COLOR (float3(0.1, 0.1, 0.8))
 #define E_COLOR (float3(0.8, 0.1, 0.1))
@@ -12,8 +14,10 @@ using namespace metal;
 struct Intersection {
   float3 normal;
   float dist;
-  bool ok;
 };
+
+#define FAILED                                                                 \
+  (Intersection) { float3(0.0), T_MAX }
 
 struct Ray {
   float3 root;
@@ -86,18 +90,18 @@ Intersection intersect_line(Ray ray, float3 start, float3 end, float radius) {
 
   // Check for parallel/degenerate cases
   if (abs(A) < 1e-6) {
-    return (Intersection){float3(0.0), 0.0, false};
+    return FAILED;
   }
 
   float discriminant = B * B - A * C;
   if (discriminant < 0.0) {
-    return (Intersection){float3(0.0), 0.0, false};
+    return FAILED;
   }
 
   // Find the closest intersection point along the ray
   float t_ray = (-B - sqrt(discriminant)) / A;
   if (t_ray < 0.0) {
-    return (Intersection){float3(0.0), 0.0, false};
+    return FAILED;
   }
 
   // Calculate exact hit position on the cylinder surface
@@ -108,7 +112,7 @@ Intersection intersect_line(Ray ray, float3 start, float3 end, float radius) {
   float t_line = dot(hit_point - start, line_dir) / length_squared(line_dir);
 
   if (t_line < 0.0 || t_line > 1.0) {
-    return (Intersection){float3(0.0), 0.0, false};
+    return FAILED;
   }
 
   float3 axis_point = start + t_line * line_dir;
@@ -117,7 +121,6 @@ Intersection intersect_line(Ray ray, float3 start, float3 end, float radius) {
   return (Intersection){
       .normal = surface_normal,
       .dist = t_ray,
-      .ok = true,
   };
 }
 
@@ -130,7 +133,7 @@ Intersection intersect_sphere(Ray ray, float3 center, float radius) {
   float discriminant = b * b - c;
 
   if (discriminant < 0.0) {
-    return (Intersection){float3(0.0), 0.0, false};
+    return FAILED;
   }
 
   float t = -b - sqrt(discriminant);
@@ -138,7 +141,7 @@ Intersection intersect_sphere(Ray ray, float3 center, float radius) {
   if (t < 0.0) {
     t = -b + sqrt(discriminant);
     if (t < 0.0) {
-      return (Intersection){float3(0.0), 0.0, false};
+      return FAILED;
     }
   }
 
@@ -148,7 +151,6 @@ Intersection intersect_sphere(Ray ray, float3 center, float radius) {
   return (Intersection){
       .normal = surface_normal,
       .dist = t,
-      .ok = true,
   };
 }
 
@@ -167,7 +169,7 @@ Intersection intersect_ell(Ray ray, float3 center, float3 orient,
       dot_val * dot_val - t_dir_norm2 * (length_squared(t_root) - 1.0);
 
   if (discriminant < 0) {
-    return (Intersection){float3(0), 0.0, false};
+    return FAILED;
   }
 
   float t_inter = -(dot_val + sqrt(discriminant)) / t_dir_norm2;
@@ -179,7 +181,6 @@ Intersection intersect_ell(Ray ray, float3 center, float3 orient,
   return (Intersection){
       normalize(world_normal),
       t_inter,
-      true,
   };
 }
 
@@ -268,10 +269,113 @@ constant float3 BOX_LINES[24] = {
     float3(0.5, -0.5, -0.5),
 };
 
+// Helper for the flat base circle cap
+bool intersect_cone_base(Ray ray, float3 center, float3 normal, float radius,
+                         thread float &t_out) {
+  float denom = dot(ray.dir, normal);
+  if (abs(denom) < 1e-6)
+    return false;
+
+  float t = dot(center - ray.root, normal) / denom;
+  if (t < 0.0)
+    return false;
+
+  float3 hit_p = ray.root + ray.dir * t;
+  if (length_squared(hit_p - center) <= radius * radius) {
+    t_out = t;
+    return true;
+  }
+  return false;
+}
+
+Intersection intersect_cone(Ray ray, float3 base, float3 apex, float radius) {
+  float3 axis = apex - base;
+  float h = length(axis);
+  if (h < 1e-6)
+    return FAILED;
+
+  float3 v = axis / h; // Normalized axis direction from base to apex
+
+  // Properties of the cone opening angle
+  float tan_theta = radius / h;
+  float tan_theta2 = tan_theta * tan_theta;
+
+  // Express ray relative to the sharp tip (apex)
+  float3 X = ray.root - apex;
+
+  // Coefficients for the quadratic equation: A*t^2 + 2*B*t + C = 0
+  float dv = dot(ray.dir, v);
+  float Xv = dot(X, v);
+
+  float A = length_squared(ray.dir - dv * v) - tan_theta2 * dv * dv;
+  float B = dot(ray.dir - dv * v, X - Xv * v) - tan_theta2 * dv * Xv;
+  float C = length_squared(X - Xv * v) - tan_theta2 * Xv * Xv;
+
+  float min_t = INFINITY;
+  float3 final_normal = float3(0.0);
+  bool hit_anything = false;
+
+  // 1. Intersect Infinite Cone Body
+  float discriminant = B * B - A * C;
+  if (discriminant >= 0.0) {
+    float sqrt_disc = sqrt(discriminant);
+    float t1 = (-B - sqrt_disc) / A;
+    float t2 = (-B + sqrt_disc) / A;
+
+    float ts[2] = {t1, t2};
+    for (int i = 0; i < 2; i++) {
+      float t = ts[i];
+      if (t >= 0.0 && t < min_t) {
+        float3 hit_p = ray.root + ray.dir * t;
+
+        // Project hit point relative to the base to check height bounds
+        float h_proj = dot(hit_p - base, v);
+
+        // Valid if hit falls between the base flat plane (0) and the tip (h)
+        if (h_proj >= 0.0 && h_proj <= h) {
+          min_t = t;
+          hit_anything = true;
+
+          // Surface normal calculations
+          float3 to_axis = hit_p - (base + h_proj * v);
+          float3 lateral = normalize(to_axis);
+
+          // Tilt the normal vector slightly downward toward the base
+          // based on the slope configuration
+          final_normal = normalize(lateral + tan_theta * v);
+        }
+      }
+    }
+  }
+
+  // 2. Intersect the Flat Base Cap (facing away from the apex)
+  float t_base;
+  if (intersect_cone_base(ray, base, -v, radius, t_base)) {
+    if (t_base < min_t) {
+      min_t = t_base;
+      final_normal = -v; // Normal points straight out the flat bottom plane
+      hit_anything = true;
+    }
+  }
+
+  if (!hit_anything) {
+    return FAILED;
+  }
+
+  return (Intersection){.normal = final_normal, .dist = min_t};
+}
+
 inline Ray generate_ray(float2 window_coord, uint2 dims, uint2 sub_pixel,
                         constant FrameSpec &frame) {
-  float2 off = window_coord + (float2(sub_pixel) + float2(0.5)) /
-                                  (float2(dims) * frame.oversamples);
+
+  float2 subpixel_normalized =
+      (float2(sub_pixel) + 0.5f) / (float)frame.oversamples;
+
+  float2 subpixel_jitter = subpixel_normalized - 0.5f;
+
+  float2 ndc_jitter = subpixel_jitter * (2.0f / float2(dims));
+
+  float2 off = window_coord + ndc_jitter;
 
   return (Ray){.root = frame.cam_root.xyz,
                .dir = normalize(frame.cam_dir.xyz + off.x * frame.cam_s1.xyz -
@@ -281,17 +385,15 @@ inline Ray generate_ray(float2 window_coord, uint2 dims, uint2 sub_pixel,
 float3 trace_main_scene(Ray ray, device const float4 *centers,
                         device const float4 *directions,
                         constant FrameSpec &frame) {
-  bool has_intersected = false;
-  Intersection closest_inter;
+  Intersection closest_inter = {.normal = float3(0.0), .dist = T_MAX};
   float3 color = BG_COLOR;
 
   // Ellipsoid Particles
   for (uint p = 0; p < frame.particle_count; p++) {
     Intersection inter = intersect_ell(ray, centers[p].xyz, directions[p].xyz,
                                        frame.ell_axes.xyz);
-    if (inter.ok && (!has_intersected || inter.dist < closest_inter.dist)) {
+    if (inter.dist < closest_inter.dist) {
       closest_inter = inter;
-      has_intersected = true;
       color = ELL_COLOR;
     }
   }
@@ -305,9 +407,8 @@ float3 trace_main_scene(Ray ray, device const float4 *centers,
 
     Intersection inter = intersect_line(ray, BOX_LINES[2 * l],
                                         BOX_LINES[2 * l + 1], LINE_RADIUS);
-    if (inter.ok && (!has_intersected || inter.dist < closest_inter.dist)) {
+    if (inter.dist < closest_inter.dist) {
       closest_inter = inter;
-      has_intersected = true;
       color = LINE_COLOR;
     }
   }
@@ -318,14 +419,13 @@ float3 trace_main_scene(Ray ray, device const float4 *centers,
       continue;
 
     Intersection inter = intersect_sphere(ray, BOX_LINES[c], LINE_RADIUS);
-    if (inter.ok && (!has_intersected || inter.dist < closest_inter.dist)) {
+    if (inter.dist < closest_inter.dist) {
       closest_inter = inter;
-      has_intersected = true;
       color = LINE_COLOR;
     }
   }
 
-  if (has_intersected) {
+  if (closest_inter.dist < T_MAX) {
     return get_color(ray.dir, frame.light_dir.xyz, closest_inter.normal, color,
                      frame.ambient_light);
   }
@@ -334,16 +434,25 @@ float3 trace_main_scene(Ray ray, device const float4 *centers,
 
 float3 trace_vector_field(Ray ray, float3 field_val, float3 field_color,
                           constant FrameSpec &frame) {
+
+  Intersection closest_inter = {.normal = float3(0.0), .dist = T_MAX};
   Intersection inter =
-      intersect_line(ray, float3(0.0), field_val * 0.5f, VECTOR_RADIUS);
-  if (inter.ok) {
-    return get_color(ray.dir, frame.light_dir.xyz, inter.normal, field_color,
-                     frame.ambient_light);
+      intersect_line(ray, float3(0.0), field_val * 0.8, VECTOR_RADIUS);
+  if (inter.dist < closest_inter.dist)
+    closest_inter = inter;
+  inter = intersect_sphere(ray, float3(0.0), VECTOR_RADIUS);
+  if (inter.dist < closest_inter.dist)
+    closest_inter = inter;
+  inter = intersect_cone(ray, field_val * 0.8, field_val, VECTOR_RADIUS * 3.0);
+  if (inter.dist < closest_inter.dist)
+    closest_inter = inter;
+  if (closest_inter.dist < T_MAX) {
+    return get_color(ray.dir, frame.light_dir.xyz, closest_inter.normal,
+                     field_color, frame.ambient_light);
   }
   return BG_COLOR;
 }
 
-// --- MAIN KERNEL ---
 kernel void render_kernel(device uint *output [[buffer(0)]],
                           device const float4 *centers [[buffer(1)]],
                           device const float4 *directions [[buffer(2)]],
@@ -356,7 +465,6 @@ kernel void render_kernel(device uint *output [[buffer(0)]],
   float aspect = (float)frame.dims.x / (float)frame.dims.y;
   float3 total_color = float3(0.0);
 
-  // Coordinates mapping for different view windows
   float2 centered_main =
       float2(gid.xy) * 2.0f / float2(frame.dims) - float2(1.0f);
 
@@ -365,14 +473,12 @@ kernel void render_kernel(device uint *output [[buffer(0)]],
           float2(frame.sub_img_dims) -
       float2(1.0f);
 
-  // BUG FIXED HERE: Corrected viewport coordinate shifts
   float2 centered_e_window =
       float2(gid.x - frame.dims.x + frame.sub_img_dims.x,
              gid.y - frame.dims.y + frame.sub_img_dims.y) *
           2.0f / float2(frame.sub_img_dims) -
       float2(1.0f);
 
-  // Determine which viewport region the current thread hits
   if (length(centered_main * float2(aspect, 1.0f)) < frame.culling_radius) {
     for (uint j = 0; j < frame.oversamples; j++) {
       for (uint i = 0; i < frame.oversamples; i++) {
@@ -382,7 +488,7 @@ kernel void render_kernel(device uint *output [[buffer(0)]],
     }
   } else if (length(centered_h_window * float2(aspect, 1.0f)) <
                  frame.culling_radius &&
-             length(frame.h_field.xyz) > 0.2) {
+             length(frame.h_field.xyz) > 0.5) {
     for (uint j = 0; j < frame.oversamples; j++) {
       for (uint i = 0; i < frame.oversamples; i++) {
         Ray ray = generate_ray(centered_h_window, frame.sub_img_dims,
@@ -393,7 +499,7 @@ kernel void render_kernel(device uint *output [[buffer(0)]],
     }
   } else if (length(centered_e_window * float2(aspect, 1.0f)) <
                  frame.culling_radius &&
-             length(frame.e_field.xyz) > 0.2) {
+             length(frame.e_field.xyz) > 0.5) {
     for (uint j = 0; j < frame.oversamples; j++) {
       for (uint i = 0; i < frame.oversamples; i++) {
         Ray ray = generate_ray(centered_e_window, frame.sub_img_dims,

@@ -9,8 +9,6 @@ use rand::{
     prelude::*,
 };
 
-use serde::{Serialize, Serializer};
-
 pub struct UnitVec;
 
 impl Distribution<Vec3> for UnitVec {
@@ -38,29 +36,16 @@ impl Distribution<Vec3> for Bounded {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Clone, Copy, Default, PartialEq, serde::Deserialize, serde::Serialize)]
 #[repr(C, align(16))]
 pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+    #[serde(skip)]
     pub _pad: f32,
 }
 
-// To serialize the entire struct as a sequence
-impl Serialize for Vec3 {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        use serde::ser::SerializeSeq;
-        let mut seq = serializer.serialize_seq(Some(3))?;
-        seq.serialize_element(&self.x)?;
-        seq.serialize_element(&self.y)?;
-        seq.serialize_element(&self.z)?;
-        seq.end()
-    }
-}
 impl fmt::Display for Vec3 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "[{}, {}, {}]", self.x, self.y, self.z)

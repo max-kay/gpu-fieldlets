@@ -17,69 +17,48 @@ const MICRO: f64 = 1e-6;
 const EPSILON_0: f64 = 8.8541878188e-12;
 const MU_0: f64 = 1.25663706127e-6;
 
-const H_REF: f64 = 1.9 * MEGA;
-const E_REF: f64 = 100.0 * MEGA;
+pub const H_REF: f64 = 1.9 * MEGA;
+pub const E_REF: f64 = 100.0 * MEGA;
 
-pub trait Invalid {
-    const INVALID: Self;
-}
-impl Invalid for f64 {
-    const INVALID: Self = Self::NAN;
-}
-
-impl Invalid for f32 {
-    const INVALID: Self = Self::NAN;
-}
-
-impl Invalid for Vec3 {
-    const INVALID: Self = Vec3 {
-        x: f32::NAN,
-        y: f32::NAN,
-        z: f32::NAN,
-        _pad: 0.0,
-    };
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub enum ValueOrFn {
+    Value(Vec3),
+    Fn {
+        init: Vec3,
+        axis: Vec3,
+        frequency: f32,
+    },
 }
 
-#[derive(Clone)]
-pub enum ValueOrFn<T: Invalid> {
-    Value(T),
-    Fn(fn(f64) -> T),
-}
-impl<T: Invalid + serde::Serialize> serde::Serialize for ValueOrFn<T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
+impl ValueOrFn {
+    pub fn get(&self, time: f64) -> Vec3 {
         match self {
-            // Serialize the actual value
-            ValueOrFn::Value(v) => v.serialize(serializer),
-            // Serialize the "Invalid" sentinel value (e.g., NaN)
-            ValueOrFn::Fn(_) => T::INVALID.serialize(serializer),
-        }
-    }
-}
-impl<T: Invalid> From<T> for ValueOrFn<T> {
-    fn from(value: T) -> Self {
-        Self::Value(value)
-    }
-}
+            ValueOrFn::Value(val) => *val,
 
-impl<T: Invalid> From<fn(f64) -> T> for ValueOrFn<T> {
-    fn from(value: fn(f64) -> T) -> Self {
-        Self::Fn(value)
-    }
-}
+            ValueOrFn::Fn {
+                init,
+                axis,
+                frequency,
+            } => {
+                let angle = 2.0 * std::f32::consts::PI * frequency * time as f32;
+                if angle == 0.0 {
+                    return *init;
+                }
+                let n = axis;
 
-impl<T: Copy + Invalid> ValueOrFn<T> {
-    pub fn get(&self, time: f64) -> T {
-        match self {
-            ValueOrFn::Value(v) => *v,
-            ValueOrFn::Fn(f) => f(time),
+                let (sin_theta, cos_theta) = angle.sin_cos();
+
+                let term1 = *init * cos_theta;
+                let term2 = n.cross(*init) * sin_theta;
+                let term3 = *n * n.dot(*init) * (1.0 - cos_theta);
+
+                term1 + term2 + term3
+            }
         }
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimulationBuilder {
     pub fill_fraction: f64,
     pub particle_number: usize,
@@ -93,10 +72,10 @@ pub struct SimulationBuilder {
     pub epsilon_mat: f64,
     pub epsilon_part: f64,
 
-    pub h_field_dir: ValueOrFn<Vec3>,
-    pub h_field_norm: ValueOrFn<f64>,
-    pub e_field_dir: ValueOrFn<Vec3>,
-    pub e_field_norm: ValueOrFn<f64>,
+    pub h_field_dir: ValueOrFn,
+    pub h_field_norm: f64,
+    pub e_field_dir: ValueOrFn,
+    pub e_field_norm: f64,
 
     pub repulsion_factor: f64,
     pub velocity_factor: f64,
@@ -127,9 +106,9 @@ impl Default for SimulationBuilder {
             epsilon_mat: 2.0,
             epsilon_part: 10.0,
             h_field_dir: Value(Vec3::new(0.0, 0.0, 1.0)),
-            h_field_norm: Value(5.0 * DEFAULT_MAG_MOMENT_DENSITY),
-            e_field_norm: Value(100.0 * MEGA),
+            h_field_norm: 5.0 * DEFAULT_MAG_MOMENT_DENSITY,
             e_field_dir: Value(Vec3::new(0.0, 1.0, 0.0)),
+            e_field_norm: 100.0 * MEGA,
             repulsion_factor: 40.0,
             duration: 3.0,
             velocity_factor: 0.3,
@@ -157,10 +136,10 @@ pub struct SimulationParameters {
     pub epsilon_mat: f64,
     pub epsilon_part: f64,
 
-    h_field_dir: ValueOrFn<Vec3>,
-    h_field_norm: ValueOrFn<f64>,
-    e_field_dir: ValueOrFn<Vec3>,
-    e_field_norm: ValueOrFn<f64>,
+    h_field_dir: ValueOrFn,
+    h_field_norm: f64,
+    e_field_dir: ValueOrFn,
+    e_field_norm: f64,
 
     pub repulsion_factor: f64,
     pub velocity_factor: f64,
@@ -183,10 +162,10 @@ pub struct SimulationParameters {
 
 impl SimulationParameters {
     pub fn ext_h_field(&self, time: f64) -> Vec3 {
-        (self.h_field_norm.get(time) / H_REF) as f32 * self.h_field_dir.get(time)
+        (self.h_field_norm / H_REF) as f32 * self.h_field_dir.get(time)
     }
     pub fn ext_e_field(&self, time: f64) -> Vec3 {
-        (self.e_field_norm.get(time) / E_REF) as f32 * self.e_field_dir.get(time)
+        (self.e_field_norm / E_REF) as f32 * self.e_field_dir.get(time)
     }
 
     pub fn gpu_params(&self, time: f64) -> GpuParams {
@@ -252,7 +231,7 @@ impl SimulationParameters {
         let u_s2 = u_s1.cross(dir).normalised();
 
         let sphere_radius = 0.5 * f32::sqrt(3.0);
-        let padding = 1.8;
+        let padding = 1.2;
 
         let half_fov_y = (sphere_radius * padding / dist).asin();
 
@@ -277,7 +256,7 @@ impl SimulationParameters {
             particle_number: self.particle_number as u32,
             oversamples: self.camera.oversamples,
             ambient_light: (self.camera.ambient_light) as f32,
-            culling_radius: 1.0 / padding,
+            culling_radius: 1.05 / padding,
 
             cam_root: root,
             cam_s1: u_s1 * half_width,
@@ -289,8 +268,8 @@ impl SimulationParameters {
                 (self.small_saxis / self.rve_side_len) as f32,
             ),
             light_dir: self.camera.light_dir,
-            h_field: self.h_field_dir.get(time),
-            e_field: self.ext_e_field(time),
+            h_field: 0.8 * self.h_field_dir.get(time),
+            e_field: 0.8 * self.e_field_dir.get(time),
         }
     }
 }
@@ -398,10 +377,10 @@ impl SimulationBuilder {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct CameraBuilder {
     pub dims: [u32; 2],
-    pub root: ValueOrFn<Vec3>,
+    pub root: ValueOrFn,
     pub oversamples: u32,
     pub light_dir: Vec3,
     pub ambient_light: f64,
