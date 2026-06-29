@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 use std::path::Path;
 use std::{error::Error, fs::File};
 
+use crate::SimulationSummary;
 use crate::gpu::{FrameSpec, GpuParams, Stage};
 
 use super::{
@@ -249,6 +250,17 @@ impl SimulationParameters {
         let sub_screen_width = (self.camera.dims[0] as f32 * sub_window_ratio) as u32;
         let sub_screen_height = (self.camera.dims[1] as f32 * sub_window_ratio) as u32;
 
+        let h_field = if self.ext_h_field(time).norm() > 0.001 {
+            0.8 * self.h_field_dir.get(time)
+        } else {
+            Vec3::new(0.0, 0.0, 0.0)
+        };
+        let e_field = if self.ext_e_field(time).norm() > 0.001 {
+            0.8 * self.e_field_dir.get(time)
+        } else {
+            Vec3::new(0.0, 0.0, 0.0)
+        };
+
         FrameSpec {
             dims: self.camera.dims,
             sub_img_dims: [sub_screen_width, sub_screen_height],
@@ -268,8 +280,8 @@ impl SimulationParameters {
                 (self.small_saxis / self.rve_side_len) as f32,
             ),
             light_dir: self.camera.light_dir,
-            h_field: 0.8 * self.h_field_dir.get(time),
-            e_field: 0.8 * self.e_field_dir.get(time),
+            h_field,
+            e_field,
         }
     }
 }
@@ -337,6 +349,13 @@ impl Into<SimulationParameters> for SimulationBuilder {
 }
 
 impl SimulationBuilder {
+    pub fn run(self, log_dir: &str) -> SimulationSummary {
+        let file =
+            File::create(format!("{}/config.json", log_dir)).expect("could not create config file");
+        serde_json::ser::to_writer_pretty(file, &self).expect("could not write to config file");
+        self.build().run(log_dir)
+    }
+
     pub fn build(self) -> Simulation {
         let params: SimulationParameters = self.into();
         let mut rng = rand::rngs::StdRng::seed_from_u64(params.seed);
@@ -370,7 +389,7 @@ impl SimulationBuilder {
         let gpu_state = crate::gpu::GpuState::new(&params, &positions, &directions);
 
         let gpu_params = params.gpu_params(0.0);
-        let pass = gpu_state.begin_pass(&gpu_params, None);
+        let pass = gpu_state.begin_pass(&gpu_params, None, "set up pass");
         pass.dispatch(Stage::EDipole);
         pass.commit_and_wait();
         Simulation { params, gpu_state }

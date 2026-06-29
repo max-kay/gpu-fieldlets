@@ -119,7 +119,7 @@ impl GpuParams {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub struct FrameSpec {
     pub dims: [u32; 2],
     pub sub_img_dims: [u32; 2],
@@ -144,7 +144,7 @@ pub enum Stage {
     HField,
     EDipole,
     Velocity,
-    CheckMaxVel,
+    MaxVel,
     Position,
     Direction,
 }
@@ -255,9 +255,22 @@ impl GpuState {
 }
 
 impl GpuState {
-    pub fn begin_pass(&self, params: &GpuParams, delta_t: Option<f32>) -> GpuPass<'_> {
+    pub fn begin_pass(
+        &self,
+        params: &GpuParams,
+        delta_t: Option<f32>,
+        name: &'static str,
+    ) -> GpuPass<'_> {
         let command_buffer = self.queue.commandBuffer().unwrap();
+        // 1. Label the command buffer so it doesn't just say "Command Buffer 0"
+        let cb_label = NSString::from_str("Physics Simulation Pass");
+        command_buffer.setLabel(Some(&cb_label));
+
         let encoder = command_buffer.computeCommandEncoder().unwrap();
+
+        // 2. Give the generic encoder an initial identity label
+        let enc_label = NSString::from_str(name);
+        encoder.setLabel(Some(&enc_label));
         unsafe {
             encoder.setBytes_length_atIndex(
                 NonNull::new(params as *const _ as *mut _).unwrap(),
@@ -294,6 +307,18 @@ pub struct GpuPass<'a> {
 
 impl<'a> GpuPass<'a> {
     pub fn dispatch(&self, stage: Stage) {
+        let stage_name = match stage {
+            Stage::EField => "Stage: EField",
+            Stage::HField => "Stage: HField",
+            Stage::EDipole => "Stage: EDipole",
+            Stage::Velocity => "Stage: Velocity",
+            Stage::MaxVel => "Stage: CheckMaxVel",
+            Stage::Position => "Stage: Position",
+            Stage::Direction => "Stage: Direction",
+        };
+        let stage_label = NSString::from_str(stage_name);
+        self.encoder.pushDebugGroup(&stage_label);
+
         let (pipeline, buffers) = match stage {
             Stage::EField => (
                 &*self.state.pipeline_e_field,
@@ -328,7 +353,7 @@ impl<'a> GpuPass<'a> {
                     &*self.state.buf_velocity,
                 ],
             ),
-            Stage::CheckMaxVel => (
+            Stage::MaxVel => (
                 &*self.state.pipeline_check,
                 vec![&*self.state.buf_velocity, &*self.state.buf_check_output],
             ),
@@ -353,7 +378,7 @@ impl<'a> GpuPass<'a> {
             }
         }
 
-        let (grid_size, thread_group_size) = if matches!(stage, Stage::CheckMaxVel) {
+        let (grid_size, thread_group_size) = if matches!(stage, Stage::MaxVel) {
             (
                 MTLSize {
                     width: 1,

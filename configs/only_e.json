@@ -1,0 +1,52 @@
+{
+  "fill_fraction": 0.01,
+  "particle_number": 100,
+  "small_saxis": 7.141857142857142e-7,
+  "big_saxis": 2.4999999999999998e-6,
+  "mag_moment_density": 380000.0,
+  "viscosity": 3.5,
+  "epsilon_mat": 2.0,
+  "epsilon_part": 10.0,
+  "h_field_dir": {
+    "Value": {
+      "x": 0.0,
+      "y": 0.0,
+      "z": 1.0
+    }
+  },
+  "h_field_norm": 0.0,
+  "e_field_dir": {
+    "Value": {
+      "x": 0.0,
+      "y": 1.0,
+      "z": 0.0
+    }
+  },
+  "e_field_norm": 100000000.0,
+  "repulsion_factor": 40.0,
+  "velocity_factor": 0.4,
+  "duration": 0.01,
+  "seed": null,
+  "name": "only electric field",
+  "log_frames": 300,
+  "camera": {
+    "dims": [
+      1000,
+      800
+    ],
+    "root": {
+      "Value": {
+        "x": 3.0,
+        "y": 3.0,
+        "z": 3.0
+      }
+    },
+    "oversamples": 3,
+    "light_dir": {
+      "x": -0.30129743,
+      "y": 0.15064871,
+      "z": 0.9415544
+    },
+    "ambient_light": 0.8
+  }
+}

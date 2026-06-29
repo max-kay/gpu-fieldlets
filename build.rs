@@ -23,8 +23,10 @@ fn main() {
             // "-fno-fast-math",
             "-flto",
             "src/lib.metal",
-            "-o",
+            "-g",
+            "-gline-tables-only",
         ])
+        .arg("-o")
         .arg(&lib_air)
         .status()
         .expect("Failed to run metal compiler for lib.metal");
@@ -40,8 +42,10 @@ fn main() {
             "-ffast-math",
             "-flto",
             "src/render.metal",
-            "-o",
+            "-g",
+            "-gline-tables-only",
         ])
+        .arg("-o")
         .arg(&render_air)
         .status()
         .expect("Failed to run metal compiler for render.metal");

@@ -16,10 +16,9 @@ mod params;
 use gpu::{GpuState, Stage};
 use math::Vec3;
 use params::{SimulationBuilder, SimulationParameters};
-use serde::Serialize;
 
-#[derive(Serialize)]
-struct SimulationSummary {
+#[derive(serde::Serialize)]
+pub struct SimulationSummary {
     iterations_ran: usize,
     log_dir: String,
     simulation_time: f64,
@@ -40,12 +39,11 @@ pub struct Simulation {
 }
 
 impl Simulation {
-    fn new() -> SimulationBuilder {
-        SimulationBuilder::default()
-    }
-
     fn run(&mut self, log_dir: &str) -> SimulationSummary {
-        if let Err(err) = self.params.to_json(format!("{}/config.json", log_dir)) {
+        if let Err(err) = self
+            .params
+            .to_json(format!("{}/calculated_params.json", log_dir))
+        {
             eprintln!("could not log configuration: {err}")
         }
 
@@ -69,14 +67,16 @@ impl Simulation {
 
             params = self.params.gpu_params(current_time);
 
-            let pass1 = self.gpu_state.begin_pass(&params, None);
-            for _ in 0..3 {
+            let pass1 = self
+                .gpu_state
+                .begin_pass(&params, None, "Update Fields and Velocity");
+            for _ in 0..2 {
                 pass1.dispatch(Stage::EField);
                 pass1.dispatch(Stage::EDipole);
             }
             pass1.dispatch(Stage::HField);
             pass1.dispatch(Stage::Velocity);
-            pass1.dispatch(Stage::CheckMaxVel);
+            pass1.dispatch(Stage::MaxVel);
             pass1.commit_and_wait();
 
             let max_vel = self.gpu_state.read_max_vel();
@@ -84,7 +84,11 @@ impl Simulation {
                 / (max_vel as f64 * self.params.rve_side_len))
                 .min(2e-5 / self.params.char_time_scale);
 
-            let pass2 = self.gpu_state.begin_pass(&params, Some(delta_t as f32));
+            let pass2 = self.gpu_state.begin_pass(
+                &params,
+                Some(delta_t as f32),
+                "Update Position and Direction",
+            );
             pass2.dispatch(Stage::Position);
             pass2.dispatch(Stage::Direction);
             pass2.commit();
@@ -175,43 +179,41 @@ fn make_log_dir() -> String {
 }
 
 fn main() {
-    let path = Path::new("small");
+    let path = Path::new("configs");
 
-    let mut simulations: Vec<Simulation> = Vec::new();
+    let mut simulations: Vec<SimulationBuilder> = Vec::new();
 
-    // Read the directory entries
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let file_path = entry.path();
-
-            // Ensure we are only reading files (and optionally checking for .json extension)
-            if file_path.is_file() && file_path.extension().and_then(|s| s.to_str()) == Some("json")
-            {
-                // Read the file content to a string
-                if let Ok(content) = fs::read_to_string(&file_path) {
-                    // Deserialize the JSON content into a Simulation instance
-                    match serde_json::from_str::<SimulationBuilder>(&content) {
-                        Ok(b) => simulations.push(b.build()),
-                        Err(e) => eprintln!("Failed to deserialize {:?}: {}", file_path, e),
-                    }
+    for entry in fs::read_dir(path).expect("could not find path").flatten() {
+        let file_path = entry.path();
+        if !(file_path.is_file() && file_path.extension().and_then(|s| s.to_str()) == Some("json"))
+        {
+            continue;
+        }
+        if let Ok(content) = fs::read_to_string(&file_path) {
+            match serde_json::from_str::<SimulationBuilder>(&content) {
+                Ok(mut b) => {
+                    b.duration = 0.001;
+                    b.particle_number = 1000;
+                    b.log_frames = 500;
+                    simulations.push(b)
                 }
+                Err(e) => eprintln!("Failed to read {:?}: {}", file_path, e),
             }
         }
-    } else {
-        eprintln!("Failed to read directory: {:?}", path);
     }
     let len = simulations.len();
-    for (i, s) in simulations.iter_mut().enumerate() {
+    for (i, s) in simulations.into_iter().enumerate() {
         let log_dir = make_log_dir();
-        println!("{}/{} simulation of `{}`", i + 1, len, s.params.name);
+        println!("{}/{} simulation of `{}`", i + 1, len, &s.name);
         println!("output directory: {log_dir}");
+        let name = s.name.clone();
         let summary = s.run(&log_dir);
         println!(
             "finished in {} average ∆t = {:.3e} s",
             format_seconds(summary.real_time),
             summary.simulation_time / summary.iterations_ran as f64,
         );
-        let anim_fname = format!("{}_{}.mp4", summary.log_dir, s.params.name);
+        let anim_fname = format!("{}_{}.mp4", log_dir, &name);
         if Command::new("ffmpeg")
             .args(&["-loglevel", "error"])
             .arg("-hide_banner")
@@ -229,6 +231,7 @@ fn main() {
         } else {
             println!("failed to create animation")
         };
-        Command::new("open").arg(&anim_fname).output().unwrap();
+        // Command::new("open").arg(&anim_fname).output().unwrap();
+        println!();
     }
 }
